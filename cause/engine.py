@@ -618,7 +618,8 @@ def analyze_alert(alert, sales, camps_wk, sales_wk, inv, changelog, ledger):
 
     # Step 3 fast path
     fp, t0 = fast_path_check(alert, changelog)
-    ledger.add("Step 3 Fast Path (change-log match)", "Deterministic", t0,
+    aid = f"[{alert['id']}]"
+    ledger.add(f"Step 3 Fast Path {aid}", "Deterministic", t0,
                "Direct event match found" if fp else "No logged event matched")
     payload["fast_path"] = fp
 
@@ -655,7 +656,7 @@ def analyze_alert(alert, sales, camps_wk, sales_wk, inv, changelog, ledger):
         hypothesis_pricing(alert, sales),
     ]
     hyps = [h for h in hyps if h]
-    ledger.add("Step 4 Hypothesis tests (x3, falsified)", "Deterministic", t0,
+    ledger.add(f"Step 4 Hypothesis tests (x3, falsified) {aid}", "Deterministic", t0,
                "; ".join(f"{h['name'].split(' ')[0]}:"
                          f"{'SUPPORTED' if h['supported'] else 'rejected'}"
                          for h in hyps))
@@ -668,7 +669,7 @@ def analyze_alert(alert, sales, camps_wk, sales_wk, inv, changelog, ledger):
     # Step 5 confidence
     t0 = time.perf_counter()
     conf = score_confidence(alert, hyps, winner)
-    ledger.add("Step 5 Confidence scoring", "Deterministic", t0,
+    ledger.add(f"Step 5 Confidence scoring {aid}", "Deterministic", t0,
                f"score={conf['score']}, tier={conf['tier']}")
     payload["confidence"] = conf
 
@@ -694,7 +695,7 @@ def analyze_alert(alert, sales, camps_wk, sales_wk, inv, changelog, ledger):
     # Step 6 conflict check
     t0 = time.perf_counter()
     conflict = conflict_check(alert, sales_wk, inv, sales, winner, camps_wk)
-    ledger.add("Step 6 Conflict check (cross-region)", "Deterministic", t0,
+    ledger.add(f"Step 6 Conflict check (cross-region) {aid}", "Deterministic", t0,
                "CONFLICT detected" if conflict["conflict"] else
                "no contradiction found")
     payload["conflict"] = conflict
