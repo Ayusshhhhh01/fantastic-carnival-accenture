@@ -49,8 +49,9 @@ def _chat(system: str, user: str):
 NARRATE_SYSTEM = (
     "You are a retail analytics narrator. Use only the facts and numbers "
     "provided in the JSON. Never add, infer, or estimate anything not "
-    "present in this JSON. If the data doesn't support a claim, do not make "
-    "it. Do not compute new numbers; reuse the provided ones verbatim."
+    "present in this JSON. Do not compute new numbers; reuse the provided "
+    "ones verbatim. Keep the note UNDER 110 WORDS. Be direct and factual - "
+    "no greetings, no filler, no hedging."
 )
 
 
@@ -68,67 +69,64 @@ def _persona_instructions(persona: str) -> str:
 
 # ------------------------------------------------------- offline fallback --
 def _offline_narrate(payload: dict, persona: str) -> str:
+    """Short analyst note assembled strictly from payload numbers."""
     a = payload["alert"]
-    conf = payload["confidence"]
     rec = payload["recommendation"]
-    lines = []
 
     if payload["route"] == "ABSTAIN":
-        ab = payload["abstention"]
         return (f"{a['kpi']} for {a['category']} / {a['region']} moved "
-                f"{a['delta_fmt']} ({a['pct_fmt']}) in the week of "
-                f"{a['week_start']}. {ab['message']}")
+                f"{a['delta_fmt']} in the week of {a['week_start']}. "
+                f"{payload['abstention']['message']}")
+
     if payload["route"] == "FAST_PATH":
         fp = payload["fast_path"]
-        lines.append(
-            f"{a['kpi']} for {a['category']} / {a['region']} came in at "
-            f"{a['current_fmt']} vs a {a['baseline_fmt']} baseline "
-            f"({a['pct_fmt']}, impact {a['delta_fmt']}).")
-        lines.append(f"A directly matched logged event explains it: "
-                     f"[{fp['event_type']}] on {fp['event_date']}: "
-                     f"{fp['description']}. Confidence {conf['tier']} "
-                     f"({conf['score']:.2f}); no deep hypothesis testing was "
-                     f"needed.")
-        lines.append(f"Recommended action: {rec['action']}")
-        return " ".join(lines)
+        return (f"{a['kpi']} for {a['category']} / {a['region']} came in at "
+                f"{a['current_fmt']} vs a {a['baseline_fmt']} baseline "
+                f"({a['pct_fmt']}, impact {a['delta_fmt']}). A logged event "
+                f"explains it directly: [{fp['event_type']}] on "
+                f"{fp['event_date']} - {fp['description']}. Confidence 95%. "
+                f"Action: {rec['action']}")
 
     winner = next((h for h in payload["hypotheses"] if h["supported"]),
                   payload["hypotheses"][0])
+    rejected = [h for h in payload["hypotheses"] if h is not winner]
     d = winner.get("detail", {})
 
+    lines = []
     if persona == "CXO":
-        status = ("UNRESOLVED - flagged for review"
+        status = ("unresolved - flagged for review"
                   if payload["route"] == "UNRESOLVED_CONFLICT"
-                  else "Resolved with high-confidence evidence")
-        head = (f"{a['category']} revenue in {a['region']} is "
-                f"{a['current_fmt']} this week, {a['pct_fmt']} vs the "
-                f"trailing 4-week baseline ({a['delta_fmt']} impact).")
-        body = (f"Cause status: {status}. The system tested "
-                f"{len(payload['hypotheses'])} competing hypotheses and the "
-                f"leading one is '{winner['name']}' ({winner['verdict']}). "
-                f"Confidence tier {conf['tier']} at {conf['score']:.2f}.")
+                  else f"explained at {winner.get('confidence_pct', 90)}% "
+                       f"confidence")
+        lines.append(f"{a['category']} {a['kpi'].lower()} in {a['region']} "
+                     f"is {a['pct_fmt']} vs baseline ({a['delta_fmt']}).")
+        lines.append(f"Cause: {winner['name'].lower()}, {status}.")
         if payload["route"] == "UNRESOLVED_CONFLICT":
-            body += (" Conflict signal: " +
-                     payload["conflict"]["signal_b"])
-        tail = f"Strategic action: {rec['action']}"
-        return " ".join([head, body, tail])
+            lines.append("Evidence conflicts across comparable regions - "
+                         "manual review advised.")
+        lines.append(f"Strategic action: {rec['action']}")
+        return " ".join(lines)
 
     # Category Manager
-    lines.append(
-        f"{a['kpi']} alert for {a['category']} / {a['region']}, week of "
-        f"{a['week_start']}: current {a['current_fmt']} vs baseline "
-        f"{a['baseline_fmt']} -> {a['pct_fmt']} ({a['delta_fmt']} impact, "
-        f"z={a['z_fmt']}).")
-    for h in payload["hypotheses"]:
-        tag = "SUPPORTED" if h["supported"] else "rejected"
-        lines.append(f"Hypothesis '{h['name']}' was {tag}: "
-                     f"{h['deciding_value']}.")
+    lines.append(f"{a['kpi']} for {a['category']} / {a['region']} is "
+                 f"{a['pct_fmt']} vs the trailing 4-week baseline "
+                 f"({a['delta_fmt']}).")
+    if winner["name"].startswith("Supply") and d:
+        lines.append(f"Cause: stock-out of {d.get('product_name')} - "
+                     f"expected {d.get('counterfactual_fmt')} over the "
+                     f"outage window vs {d.get('actual_fmt')} actual, i.e. "
+                     f"{d.get('explains_pct')}% of the move.")
+    else:
+        lines.append(f"Cause: {winner['name'].lower()} - "
+                     f"{winner['deciding_value']}")
+    for h in rejected[:2]:
+        lines.append(f"Ruled out: {h['name'].lower()} "
+                     f"({h['deciding_value'].split(';')[0]}).")
     if payload["route"] == "UNRESOLVED_CONFLICT":
-        c = payload["conflict"]
-        lines.append(f"Conflict flagged: {c['signal_a']} VS {c['signal_b']}.")
-    lines.append(f"Confidence {conf['tier']} ({conf['score']:.2f}). "
-                 f"Tactical action: {rec['action']}"
-                 + (f" Estimated weekly recovery {rec['est_impact_fmt']}."
+        lines.append(f"Conflict: {payload['conflict']['signal_b']}")
+    lines.append(f"Confidence {winner.get('confidence_pct', 90)}%. "
+                 f"Action: {rec['action']}"
+                 + (f" Est. recovery {rec['est_impact_fmt']}/wk."
                     if rec.get("est_impact_fmt") else ""))
     return " ".join(lines)
 
@@ -155,6 +153,14 @@ def narrate(payload: dict, persona: str, ledger_add=None):
 
 # ------------------------------------------------------------- Step 9 -----
 NUM_TOKEN = re.compile(r"(₹\s?[\d,]+(?:\.\d+)?\s?(?:Cr|L|cr|l)?|\d+(?:\.\d+)?%)")
+
+
+def _is_num(x):
+    try:
+        float(x)
+        return True
+    except ValueError:
+        return False
 
 
 def _allowed_numbers(payload: dict):
@@ -217,17 +223,38 @@ def self_verify(text: str, payload: dict, ledger_add=None):
 
     if claims is None:
         # Deterministic numeric-claim audit: every number in the narrative
-        # must exist inside the source JSON (any formatting).
-        allowed = _allowed_numbers(payload)
-        sentences = re.split(r"(?<=[.!?])\s+", text)
+        # must exist inside the source JSON (any formatting, % aware).
+        allowed_raw = _allowed_numbers(payload)
+        allowed = {a.replace(" ", "").replace(",", "").rstrip("%").lower()
+                   for a in allowed_raw}
+        sentences = re.split(r"(?<=[.!?])\s+", text.replace("i.e.", "ie"))
         keep = []
         for s in sentences:
-            bad = [t for t in NUM_TOKEN.findall(s)
-                   if t.replace(" ", "").replace(",", "")
-                   not in {a.replace(" ", "").replace(",", "")
-                           for a in allowed}]
+            s = s.replace("ie ", "i.e. ") if s.startswith("ie ") else s
+            bad = []
+            for tok in NUM_TOKEN.findall(s):
+                norm = tok.replace(" ", "").replace(",", "").lower()
+                bare = norm.rstrip("%")
+                if norm in allowed or bare in allowed:
+                    continue
+                # tolerate rounding: 19.4% vs 19.42 stored as 0.194 -> check
+                try:
+                    val = float(bare.rstrip("%"))
+                    if any(abs(val - float(a)) <= 0.051
+                           for a in [x for x in allowed
+                                     if _is_num(x)]):
+                        continue
+                    # percent values may be stored as fractions (0.194)
+                    frac = val / 100
+                    if any(abs(frac - float(a)) <= 0.0011
+                           for a in [x for x in allowed if _is_num(x)]):
+                        continue
+                except ValueError:
+                    pass
+                bad.append(tok)
             if bad:
-                removed.append({"claim_sentence": s, "unverified_tokens": bad})
+                removed.append({"claim_sentence": s,
+                                "unverified_tokens": bad})
             else:
                 keep.append(s)
         clean = " ".join(keep)

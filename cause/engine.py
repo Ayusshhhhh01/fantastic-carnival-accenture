@@ -361,6 +361,54 @@ def hypothesis_pricing(alert, sales):
 
 
 # --------------------------------------------- Step 5: confidence scoring --
+# Per-candidate weight profiles: each hypothesis type emphasises different
+# evidence factors. Confidence% = 100 * Σ(Wi · factor_i).
+FACTOR_LABELS = {
+    "temporal_correlation": ("W\u2081", "Temporal Correlation"),
+    "source_agreement": ("W\u2082", "Source Reliability"),
+    "hypothesis_margin": ("W\u2083", "Contrary Stats Score"),
+    "data_completeness": ("W\u2084", "Evidence Density"),
+}
+HYP_WEIGHTS = {
+    "Supply": {"temporal_correlation": 0.35, "source_agreement": 0.20,
+               "hypothesis_margin": 0.15, "data_completeness": 0.30},
+    "Demand": {"temporal_correlation": 0.10, "source_agreement": 0.45,
+               "hypothesis_margin": 0.20, "data_completeness": 0.25},
+    "Pricing": {"temporal_correlation": 0.30, "source_agreement": 0.15,
+                "hypothesis_margin": 0.35, "data_completeness": 0.20},
+}
+
+
+def attach_hypothesis_confidence(hyps, comps):
+    """Give every hypothesis its own weighted confidence percentage.
+
+    Factors are hypothesis-specific where they should be:
+      - Source Reliability = do independent data sources back THIS candidate
+        (a rejected candidate has sources contradicting it)
+      - Contrary Stats Score = how decisively this candidate beats the
+        strongest competing candidate on raw metric strength
+    """
+    scores = [h["score"] for h in hyps]
+    for i, h in enumerate(hyps):
+        kind = h["name"].split("-")[0].split(" ")[0]
+        w = HYP_WEIGHTS.get(kind, HYP_WEIGHTS["Supply"])
+        others = [s for j, s in enumerate(scores) if j != i]
+        margin = max(0.0, h["score"] - max(others)) if others else h["score"]
+        src = comps["source_agreement"] if h["supported"] \
+            else round(comps["source_agreement"] * h["score"], 3)
+        f = {
+            "temporal_correlation": comps["temporal_correlation"],
+            "source_agreement": src,
+            "hypothesis_margin": round(margin, 3),
+            "data_completeness": comps["data_completeness"],
+        }
+        pct = sum(w[k] * f[k] for k in w)
+        h["confidence_pct"] = round(pct * 100)
+        h["weights"] = w
+        h["factors"] = f
+
+
+
 def score_confidence(alert, hyps, winner):
     components = {}
     detail = winner.get("detail", {})
@@ -669,6 +717,7 @@ def analyze_alert(alert, sales, camps_wk, sales_wk, inv, changelog, ledger):
     # Step 5 confidence
     t0 = time.perf_counter()
     conf = score_confidence(alert, hyps, winner)
+    attach_hypothesis_confidence(hyps, conf["components"])
     ledger.add(f"Step 5 Confidence scoring {aid}", "Deterministic", t0,
                f"score={conf['score']}, tier={conf['tier']}")
     payload["confidence"] = conf

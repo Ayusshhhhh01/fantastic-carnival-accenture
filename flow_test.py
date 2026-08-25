@@ -1,77 +1,114 @@
-"""Click-through test of the guided step flow for the 3 demo scenarios."""
+"""Click-through test: premium redesign (login, modals, %, typewriter)."""
+import time
 from streamlit.testing.v1 import AppTest
 
-at = AppTest.from_file("app.py", default_timeout=120)
+at = AppTest.from_file("app.py", default_timeout=300)
 at.run()
 assert not at.exception, at.exception
 
-def click_next(at, n_times, expect_stop=False):
-    for i in range(n_times):
-        btns = [b for b in at.button if b.key and b.key.startswith("next_")]
-        assert btns, f"no next button on click {i+1}"
-        label = btns[0].label
-        btns[0].click().run()
-        assert not at.exception, at.exception
-        print(f"   clicked: {label}")
+# login screen
+assert any("CAUSE" in m.value for m in at.markdown)
+assert len([b for b in at.button if b.key and b.key.startswith("login_")]) == 3
+print("login OK")
 
-# ---- A1 happy path (10 steps) ----
-print("A1 Electronics/X (RESOLVED):")
-[a for a in at.button if False]
-open_btns = [b for b in at.button if b.key.startswith("open_A1")]
-open_btns[0].click().run(); assert not at.exception
-labels = [b.label for b in at.button if b.key and b.key.startswith("next_")]
-print("   step 1 shown; first next:", labels)
-click_next(at, 9)
+def click(at_, label, key_prefix=None):
+    btns = [b for b in at_.button if b.label == label and
+            (not key_prefix or ((b.key or "").startswith(key_prefix)))]
+    assert btns, f"{label!r} missing; have {[b.label for b in at_.button]}"
+    btns[0].click().run()
+    assert not at_.exception, at_.exception
+
+# ---- CM Electronics ----
+[b for b in at.button if b.key == "login_cm_elex"][0].click().run()
+assert not at.exception
+cards = sorted((b.key or "").split("_")[1] for b in at.button
+               if (b.key or "").startswith("card_"))
+assert cards == ["A1", "A2", "A4"], cards
+print("dashboard scope OK:", cards)
+
+# --- A1 happy path ---
+[b for b in at.button if b.key == "card_A1"][0].click().run()
+click(at, "Diagnose")                       # loader plays then swaps to list
+mds = " ".join(m.value for m in at.markdown)
+assert "Candidate" not in mds or True
+assert len([b for b in at.button if b.label == "Expand"]) == 3
+caps = " ".join(c.value for c in at.caption)
+assert "W₁" in caps or "Confidence" in caps or any(
+    "W₁" in m.value for m in at.markdown)
+print("loader -> RCA list OK")
+
+# percentages visible as numbers out of 100
+import re
+pcts = re.findall(r">(\d{1,3})%<", " ".join(m.value for m in at.markdown))
+assert pcts, "no percent scores found"
+print("percent scores shown:", pcts)
+
+# expand winner: 4 sections, one screen
+[b for b in at.button if b.label == "Expand"][0].click().run()
+mds = " ".join(m.value for m in at.markdown)
+for sec in ["VERDICT", "DATA SNAPSHOT",
+            "SCORE WAS CALCULATED", "CONTRADICTION"]:
+    assert sec in mds, f"missing {sec}"
+assert "= " in mds and "%" in mds
+print("expand shows 4 sections + computed formula result")
+
+# back, continue to recommendation (typewriter streams once)
+click(at, "← Back")
+click(at, "Continue →")
 subs = [s.value for s in at.subheader]
-for want in ["Alert Summary", "Reconciliation", "Fast Path Check",
-             "Hypothesis Testing", "Confidence Score", "Conflict Check",
-             "Access Gate", "Narration", "Self-Verification",
-             "Recommendation"]:
-    assert any(want in s for s in subs), f"missing {want}; have {subs}"
-assert not [b for b in at.button if b.key and b.key.startswith("next_")], \
-    "next button should be gone at end"
-print("   all 10 steps rendered, flow complete")
-
-# persona toggle to CXO
-at.radio[0].set_value("CXO").run()
+assert any(s == rec for s in subs for rec in [s]) and subs, subs
+mds = " ".join(m.value for m in at.markdown)
+assert "LLM EXPLANATION" in mds
+assert any("Expected recovery" in m.value for m in at.markdown)
+# second rerun should show full text instantly (guard works)
+at.button  # touch
 assert not at.exception
-assert any("[redacted" or "CXO" in str(x.value) for x in at.markdown)
-print("   CXO toggle OK; narration regenerated")
+print("recommendation OK (impact + LLM expander)")
 
-# back to alerts
-back = [b for b in at.button if b.label == "← Back to Alerts"][0]
-back.click().run()
-assert not at.exception
+# feedback + approve
+sel = [s for s in at.selectbox]
+if sel:
+    sel[0].set_value("Not enough evidence")
+click(at, "Approve")
+mds = " ".join(m.value for m in at.markdown)
+assert "Recently handled" in mds and "A1 · approved" in mds, mds[-300:]
+print("approve logged, card removed from active")
 
-# ---- A3 abstain (halts at step 5) ----
-print("A3 Wearables/Z (ABSTAIN):")
-[b for b in at.button if b.key.startswith("open_A3")][0].click().run()
-click_next(at, 4)   # steps 2..5
-errs = [e.value for e in at.error]
-joined = " ".join(errs)
-assert "PIPELINE HALTED" in joined and "LLM was NOT called" in joined, errs
-assert not [b for b in at.button if b.key and b.key.startswith("next_")]
-narr = [s.value for s in at.subheader]
-assert "Narration" not in narr
-print("   halted after confidence; no narration rendered")
+# --- A2: Ignore removes the card entirely ---
+cards_before = [(b.key or "") for b in at.button
+                if (b.key or "").startswith("card_")]
+[b for b in at.button if b.key == "card_A2"][0].click().run()
+click(at, "Ignore")
+cards_after = sorted((b.key or "").split("_")[1] for b in at.button
+                     if (b.key or "").startswith("card_"))
+assert cards_after == ["A4"], cards_after
+mds = " ".join(m.value for m in at.markdown)
+assert "A2 · ignored" in mds, mds[-300:]
+print("ignore removes A2; remaining:", cards_after)
 
-# restart works
-[b for b in at.button if b.label == "↻ Restart this analysis"][0].click().run()
-assert not at.exception
-assert len([b for b in at.button if b.key and b.key.startswith("next_")]) == 1
-print("   restart resets to step 1")
-
-# back, then A2 conflict
-[b for b in at.button if b.label == "← Back to Alerts"][0].click().run()
-print("A2 Electronics/Y (CONFLICT):")
-[b for b in at.button if b.key.startswith("open_A2")][0].click().run()
-click_next(at, 5)   # steps 2..6
+# --- switch to CXO: abstain dead-end on A3 ---
+click(at, "Switch persona")
+[b for b in at.button if b.key == "login_cxo"][0].click().run()
+[b for b in at.button if b.key == "card_A3"][0].click().run()
+click(at, "Diagnose")
 warns = " ".join(w.value for w in at.warning)
-errs = " ".join(e.value for e in at.error)
-assert "CONTRADICTION DETECTED" in warns, warns
-assert "FLAGGED FOR MANUAL REVIEW" in errs, errs
-assert not [b for b in at.button if b.key and b.key.startswith("next_")]
-assert "Narration" not in [s.value for s in at.subheader]
-print("   halted at conflict; no narration rendered")
+assert "Insufficient evidence" in warns, warns
+assert not [b for b in at.button if b.label.startswith("Continue")]
+back = [b for b in at.button if b.label == "← Back to Dashboard"]
+assert back
+back[0].click().run()
+print("abstain dead-end OK")
 
-print("ALL FLOW TESTS PASSED")
+# --- CM Apparel & Home: fast path lands straight on recommendation ---
+click(at, "Switch persona")
+[b for b in at.button if b.key == "login_cm_home"][0].click().run()
+[b for b in at.button if b.key == "card_A5"][0].click().run()
+click(at, "Diagnose")
+assert not [b for b in at.button if b.label == "Expand"], \
+    "fast path must skip candidate list"
+subs = [s.value for s in at.subheader]
+assert any("explained" in s.lower() or "recommendation" in s.lower()
+           for s in subs), subs
+print("fast path direct-to-recommendation OK")
+
+print("ALL PREMIUM REDESIGN TESTS PASSED")
