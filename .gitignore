@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+cause/data/decisions.csv
+.venv/
