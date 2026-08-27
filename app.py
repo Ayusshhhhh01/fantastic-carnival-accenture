@@ -588,7 +588,7 @@ if active:
                     {route_pill(A['route'])}
                     <span style='font-size:11.5px;font-weight:700;color:{TEXT_MUTED};'>{al['category']}{region_txt}</span>
                 </div>
-                <div style='font-size:16px;font-weight:800;color:{TEXT_PRIMARY};margin-bottom:12px;'>
+                <div style='font-size:16px;font-weight:800;color:{TEXT_PRIMARY};margin-bottom:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;'>
                     {al['kpi']} · {al['category']}{region_txt}
                 </div>
                 <div style='background:{SURFACE_BG};border:1px solid {LINE_BORDER};border-radius:8px;padding:10px 12px;margin-bottom:14px;'>
@@ -695,17 +695,17 @@ def rca_modal():
         key = ("diag", al["id"])
         if key not in ss["played"]:
             fp = A["fast_path"]
-            steps = [
-                ("Aligning data sources to common weekly grain (daily sales + weekly campaigns)…",
-                 "reconciled 91 daily rows/cell to 13 Monday-grain intervals"),
-                ("Evaluating Role-Based Access Control & Column Entitlements…",
-                 f"Access check: {persona['short']} -> {'SKU/product fields redacted' if persona['llm_persona'] == 'CXO' else 'Full SKU & operational telemetry unlocked'}"),
-                ("Scanning ops Change Log…",
-                 "direct match found" if fp else "no match — escalating to deep path"),
-            ]
+            steps = [("Aligning data sources to common weekly grain…",
+                      "sales (daily) + campaigns (weekly) reconciled")]
+            steps.append(("Scanning ops Change Log…",
+                          "direct match found" if fp else "no match — escalating to deep path"))
             if not fp:
                 for h in hyps:
                     steps.append((f"Testing {h['name']}…", f"{h['confidence_pct']}% · {'supported' if h['supported'] else 'rejected'}"))
+                pkey = persona["llm_persona"]
+                access_note = ("CXO — SKU/product fields will be redacted, category aggregates only"
+                               if pkey == "CXO" else "Category Manager — full operational detail permitted")
+                steps.append((f"Checking access permissions ({pkey})…", access_note))
                 steps.append(("Scoring confidence with per-candidate weights…", "done"))
 
             st.subheader("Diagnosing…")
@@ -761,6 +761,12 @@ def rca_modal():
     # ------------------ Step 4 : Hypothesis Ranking Matrix ------------------
     elif ss["stage"] == "rca_list":
         header_line()
+        if route == "UNRESOLVED_CONFLICT":
+            st.markdown(pill("CONFLICTING SIGNALS — REVIEW BEFORE ACTING", CONF, CONF_BG, CONF_BORDER),
+                        unsafe_allow_html=True)
+            st.caption("Comparable regions show contradicting outcomes for the leading "
+                       "cause. Expand it below for details before approving any action.")
+            st.write("")
         st.caption("Candidates revealed as their tests complete · Confidence = W₁·Temporal + W₂·Source Reliability + W₃·Contrary Stats + W₄·Evidence Density, weighted per candidate type")
         
         first = ("rca", al["id"]) not in ss["played"]
@@ -857,17 +863,29 @@ def rca_modal():
         else:
             st.caption("Basis: " + rec["basis"])
 
+        # FIX 5: Persona preview toggle
+        pkey = persona["llm_persona"]
+        other_persona = "CXO" if pkey == "Category Manager" else "Category Manager"
+        if st.toggle(f"Preview as {other_persona}", key=f"preview_{al['id']}"):
+            pkey = other_persona
+
         # Audited Natural Language Narration Box
         with st.container(border=True):
             st.markdown(pill("LLM EXPLANATION · AUTO-AUDITED", ACCENT_PURPLE_DARK, ACCENT_PURPLE_LIGHT, ACCENT_PURPLE_BORDER, "⚡"), unsafe_allow_html=True)
             
-            pkey = persona["llm_persona"]
             nkey = (al["id"], pkey)
             if nkey not in ss["narrations"]:
                 payload = redact_for_cxo(dict(A)) if pkey == "CXO" else dict(A)
+                t0 = time.time()
                 text, eng = llm.narrate(payload, pkey)
+                t1 = time.time()
                 clean, removed, audit = llm.self_verify(text, payload)
-                ss["narrations"][nkey] = {"clean": clean, "removed": removed, "engine": eng, "audit": audit}
+                t2 = time.time()
+                ss["narrations"][nkey] = {
+                    "clean": clean, "removed": removed, "engine": eng,
+                    "audit": audit, "narrate_latency": t1 - t0,
+                    "verify_latency": t2 - t1
+                }
                 
             N = ss["narrations"][nkey]
             skey = ("stream", al["id"], pkey)
@@ -887,98 +905,6 @@ def rca_modal():
                 
             st.caption("Generated strictly from the verified JSON above · " + audit_pill, unsafe_allow_html=True)
 
-        # ------------------ Evidence Ledger & Telemetry Expander ------------------
-        with st.expander("◈ Evidence Ledger: Steps 1–7 deterministic (SQL/Python), Step 8 LLM, Step 9 Self-Verify", expanded=False):
-            st.markdown(f"""
-            <div style='display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;'>
-                <span style='font-size:12px;font-weight:700;color:{TEXT_PRIMARY};text-transform:uppercase;letter-spacing:0.04em;'>LLM vs Non-LLM Processing Breakdown</span>
-                <span style='font-size:11.5px;color:{TEXT_MUTED};'>End-to-End Latency: <b>~118 ms</b> · Est. Cost: <b>$0.00018 (~₹0.015)</b></span>
-            </div>
-            <table style='width:100%;font-size:12px;border-collapse:collapse;margin-bottom:10px;'>
-                <tr style='background:{SURFACE_BG};border-bottom:1px solid {LINE_BORDER};font-weight:700;color:{TEXT_MUTED};text-align:left;'>
-                    <th style='padding:5px 6px;'>Pipeline Step</th>
-                    <th style='padding:5px 6px;'>Processing Method</th>
-                    <th style='padding:5px 6px;'>Engine & Logic</th>
-                    <th style='padding:5px 6px;'>Latency</th>
-                    <th style='padding:5px 6px;'>Cost (USD)</th>
-                </tr>
-                <tr style='border-bottom:1px solid {LINE_BORDER};'>
-                    <td style='padding:5px 6px;font-weight:600;'>Step 1: Detect Anomalies</td>
-                    <td style='padding:5px 6px;'>{pill("DETERMINISTIC", GOOD, GOOD_BG, GOOD_BORDER)}</td>
-                    <td style='padding:5px 6px;color:{TEXT_SECONDARY};'>Statistical z-score (|z|≥1.5) & materiality filter (|Δ|≥10%)</td>
-                    <td style='padding:5px 6px;color:{TEXT_MUTED};'>46.9 ms</td>
-                    <td style='padding:5px 6px;color:{TEXT_MUTED};'>$0.0000</td>
-                </tr>
-                <tr style='border-bottom:1px solid {LINE_BORDER};'>
-                    <td style='padding:5px 6px;font-weight:600;'>Step 2: Reconcile Grains</td>
-                    <td style='padding:5px 6px;'>{pill("DETERMINISTIC", GOOD, GOOD_BG, GOOD_BORDER)}</td>
-                    <td style='padding:5px 6px;color:{TEXT_SECONDARY};'>Resample daily sales (POS) to weekly Monday grain to align with campaigns</td>
-                    <td style='padding:5px 6px;color:{TEXT_MUTED};'>37.4 ms</td>
-                    <td style='padding:5px 6px;color:{TEXT_MUTED};'>$0.0000</td>
-                </tr>
-                <tr style='border-bottom:1px solid {LINE_BORDER};'>
-                    <td style='padding:5px 6px;font-weight:600;'>Step 3: Fast Path Scan</td>
-                    <td style='padding:5px 6px;'>{pill("DETERMINISTIC", GOOD, GOOD_BG, GOOD_BORDER)}</td>
-                    <td style='padding:5px 6px;color:{TEXT_SECONDARY};'>Operations Change Log & IT incident temporal window scan</td>
-                    <td style='padding:5px 6px;color:{TEXT_MUTED};'>1.3 ms</td>
-                    <td style='padding:5px 6px;color:{TEXT_MUTED};'>$0.0000</td>
-                </tr>
-                <tr style='border-bottom:1px solid {LINE_BORDER};'>
-                    <td style='padding:5px 6px;font-weight:600;'>Step 4: Hypothesis Testing</td>
-                    <td style='padding:5px 6px;'>{pill("DETERMINISTIC", GOOD, GOOD_BG, GOOD_BORDER)}</td>
-                    <td style='padding:5px 6px;color:{TEXT_SECONDARY};'>Supply stockout counterfactuals, demand shifts, price moves</td>
-                    <td style='padding:5px 6px;color:{TEXT_MUTED};'>14.9 ms</td>
-                    <td style='padding:5px 6px;color:{TEXT_MUTED};'>$0.0000</td>
-                </tr>
-                <tr style='border-bottom:1px solid {LINE_BORDER};'>
-                    <td style='padding:5px 6px;font-weight:600;'>Step 5: Confidence Scoring</td>
-                    <td style='padding:5px 6px;'>{pill("DETERMINISTIC", GOOD, GOOD_BG, GOOD_BORDER)}</td>
-                    <td style='padding:5px 6px;color:{TEXT_SECONDARY};'>W₁·Temporal + W₂·Source + W₃·Margin + W₄·Density Bayesian scoring</td>
-                    <td style='padding:5px 6px;color:{TEXT_MUTED};'>0.1 ms</td>
-                    <td style='padding:6px 8px;color:{TEXT_MUTED};'>$0.0000</td>
-                </tr>
-                <tr style='border-bottom:1px solid {LINE_BORDER};'>
-                    <td style='padding:5px 6px;font-weight:600;'>Step 6: Conflict Check</td>
-                    <td style='padding:5px 6px;'>{pill("DETERMINISTIC", GOOD, GOOD_BG, GOOD_BORDER)}</td>
-                    <td style='padding:5px 6px;color:{TEXT_SECONDARY};'>Cross-region consistency test across sibling operational cells</td>
-                    <td style='padding:5px 6px;color:{TEXT_MUTED};'>8.5 ms</td>
-                    <td style='padding:5px 6px;color:{TEXT_MUTED};'>$0.0000</td>
-                </tr>
-                <tr style='border-bottom:1px solid {LINE_BORDER};'>
-                    <td style='padding:5px 6px;font-weight:600;'>Step 7: Access Gate</td>
-                    <td style='padding:5px 6px;'>{pill("DETERMINISTIC", GOOD, GOOD_BG, GOOD_BORDER)}</td>
-                    <td style='padding:5px 6px;color:{TEXT_SECONDARY};'>Role-based column security ({persona['short']}: {'SKU Redacted' if persona['llm_persona'] == 'CXO' else 'Full SKU'})</td>
-                    <td style='padding:5px 6px;color:{TEXT_MUTED};'>0.2 ms</td>
-                    <td style='padding:5px 6px;color:{TEXT_MUTED};'>$0.0000</td>
-                </tr>
-                <tr style='border-bottom:1px solid {LINE_BORDER};background:{ACCENT_PURPLE_LIGHT}20;'>
-                    <td style='padding:5px 6px;font-weight:700;color:{ACCENT_PURPLE_DARK};'>Step 8: LLM Narration</td>
-                    <td style='padding:5px 6px;'>{pill("GENERATIVE LLM (1 call)", ACCENT_PURPLE_DARK, ACCENT_PURPLE_LIGHT, ACCENT_PURPLE_BORDER)}</td>
-                    <td style='padding:5px 6px;color:{TEXT_SECONDARY};'>Natural language narrative generation ({N['engine']})</td>
-                    <td style='padding:5px 6px;color:{TEXT_MUTED};'>~45 ms</td>
-                    <td style='padding:5px 6px;color:{TEXT_MUTED};'>$0.00018</td>
-                </tr>
-                <tr style='border-bottom:1px solid {LINE_BORDER};'>
-                    <td style='padding:5px 6px;font-weight:700;color:{ACCENT_PURPLE_DARK};'>Step 9: Self-Verify Audit</td>
-                    <td style='padding:5px 6px;'>{pill("DETERMINISTIC AUDIT", GOOD, GOOD_BG, GOOD_BORDER)}</td>
-                    <td style='padding:5px 6px;color:{TEXT_SECONDARY};'>Claim verification & numeric hallucination detector (0 unverified)</td>
-                    <td style='padding:5px 6px;color:{TEXT_MUTED};'>0.5 ms</td>
-                    <td style='padding:5px 6px;color:{TEXT_MUTED};'>$0.0000</td>
-                </tr>
-                <tr>
-                    <td style='padding:5px 6px;font-weight:600;'>Step 10: Action Directive</td>
-                    <td style='padding:5px 6px;'>{pill("DETERMINISTIC", GOOD, GOOD_BG, GOOD_BORDER)}</td>
-                    <td style='padding:5px 6px;color:{TEXT_SECONDARY};'>Controllable lever mapping + Counterfactual ₹ recovery calculation</td>
-                    <td style='padding:5px 6px;color:{TEXT_MUTED};'>0.1 ms</td>
-                    <td style='padding:5px 6px;color:{TEXT_MUTED};'>$0.0000</td>
-                </tr>
-            </table>
-            <div style='background:{SURFACE_BG};border:1px solid {LINE_BORDER};border-radius:6px;padding:6px 10px;font-size:11px;color:{TEXT_MUTED};display:flex;justify-content:space-between;'>
-                <span><b>Lineage Freshness:</b> Sales POS (Daily) · Campaigns CRM (Weekly) · Inventory (Daily) · Change Log ERP</span>
-                <span><b>Zero-Hallucination Enforced:</b> LLM never computes quantitative numbers</span>
-            </div>
-            """, unsafe_allow_html=True)
-
         # Decision validation form
         reason = st.selectbox(
             "Before you decide — anything off?",
@@ -994,6 +920,29 @@ def rca_modal():
                   on_click=make_decider(al["id"], al, route, "approved"))
         f2.button("Reject", width="stretch", key=f"rj_{al['id']}",
                   on_click=make_decider(al["id"], al, route, "rejected"))
+
+        # FIX 3: Evidence Ledger Expander
+        st.write("")
+        with st.expander("Evidence Ledger", expanded=False):
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown(f"<span style='color:{ACCENT_PURPLE_DARK};font-weight:700;font-size:12px;'>DETERMINISTIC</span>", unsafe_allow_html=True)
+                for line in ["Anomaly detection (z-score vs 4-wk baseline)",
+                             "Source reconciliation (grain alignment)",
+                             "Change Log lookup (Fast Path)",
+                             "Hypothesis testing (counterfactual/contribution math)",
+                             "Confidence scoring (4-factor weighted formula)",
+                             "Conflict detection (cross-region comparison)",
+                             "Access/entitlement check"]:
+                    st.caption("✓ " + line)
+            with c2:
+                st.markdown(f"<span style='color:{ACCENT_PURPLE_DARK};font-weight:700;font-size:12px;'>LLM (AUDITED)</span>", unsafe_allow_html=True)
+                st.caption("✓ Narrative generation — phrases pre-computed JSON only")
+                st.caption("✓ Self-verification — strips unsupported claims")
+            st.divider()
+            st.caption(f"2 LLM calls · narration {N.get('narrate_latency', 0):.1f}s · "
+                       f"verification {N.get('verify_latency', 0):.1f}s · "
+                       f"deterministic steps ~instant")
 
 
 if ss["open_aid"]:
