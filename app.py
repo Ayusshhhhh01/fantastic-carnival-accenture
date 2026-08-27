@@ -952,23 +952,19 @@ def rca_modal():
                 t1 = time.time()
                 clean, removed, audit = llm.self_verify(text, payload)
                 t2 = time.time()
+                
+                assert isinstance(clean, str), "LLM narrative must be a string"
+                normalized_clean = " ".join(clean.split()).strip()
+                
                 ss["narrations"][nkey] = {
-                    "clean": clean, "removed": removed, "engine": eng,
+                    "clean": normalized_clean, "removed": removed, "engine": eng,
                     "audit": audit, "narrate_latency": t1 - t0,
                     "verify_latency": t2 - t1
                 }
                 
             N = ss["narrations"][nkey]
-            skey = ("stream", al["id"], pkey)
-            if skey in ss["played"]:
-                st.markdown(f"<div style='font-size:13.5px;line-height:1.55;color:{TEXT_PRIMARY};font-weight:500;'>{N['clean']}</div>", unsafe_allow_html=True)
-            else:
-                def typewriter(txt, chunk=2, tick=0.006):
-                    for j in range(0, len(txt), chunk):
-                        yield txt[:j + chunk]
-                        time.sleep(tick)
-                st.write_stream(typewriter(N["clean"]))
-                ss["played"].add(skey)
+            # Render exactly once without streaming/concatenation
+            st.markdown(f"<div style='font-size:13.5px;line-height:1.55;color:{TEXT_PRIMARY};font-weight:500;padding:2px 0 6px;'>{N['clean']}</div>", unsafe_allow_html=True)
                 
             audit_pill = pill("✓ all claims verified", GOOD, GOOD_BG, GOOD_BORDER, "✓") \
                 if not N["removed"] else \

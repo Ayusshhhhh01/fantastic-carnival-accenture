@@ -60,10 +60,19 @@ assert any(s == rec for s in subs for rec in [s]) and subs, subs
 mds = " ".join(m.value for m in at.markdown)
 assert "LLM EXPLANATION" in mds
 assert any("Expected recovery" in m.value for m in at.markdown)
-# second rerun should show full text instantly (guard works)
+
+# Regression Assertion: Verify NO character-level cumulative duplication (ReReveRevenu...)
+rendered_blocks = [m.value for m in at.markdown if "font-size:13.5px" in m.value or "Root cause:" in m.value]
+assert rendered_blocks, "Rendered narrative not found"
+raw_narrative = rendered_blocks[0]
+assert not any(bad in raw_narrative for bad in ["ReReve", "RevenuRevenue", "AppApparel", "ElecElectronics"]), \
+    f"Cumulative character repetition bug detected: {raw_narrative}"
+assert len(raw_narrative.split()) <= 100, f"Narrative word count > 100: {len(raw_narrative.split())}"
+
+# Rerun should stay clean and identical
 at.button  # touch
 assert not at.exception
-print("recommendation OK (impact + LLM expander)")
+print("recommendation OK (no duplication, <=100 words, clean render)")
 
 # feedback + approve
 sel = [s for s in at.selectbox]
