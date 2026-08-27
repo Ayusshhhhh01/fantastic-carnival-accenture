@@ -47,29 +47,26 @@ def _chat(system: str, user: str):
 
 
 NARRATE_SYSTEM = (
-    "You are a retail analytics narrator. Use only the facts and numbers "
-    "provided in the JSON. Never add, infer, or estimate anything not "
-    "present in this JSON. Do not compute new numbers; reuse the provided "
-    "ones verbatim. Keep the note UNDER 110 WORDS. Be direct and factual - "
-    "no greetings, no filler, no hedging."
+    "You are an executive retail analytics narrator. Use only the facts and numbers "
+    "provided in the JSON. Never add, infer, or estimate anything not present in this JSON. "
+    "Do not compute new numbers; reuse the provided ones verbatim. "
+    "Keep the entire brief UNDER 75 WORDS. Show strictly: what happened, leading cause, "
+    "key evidence, confidence, and recommended action. Be concise, direct, and factual. "
+    "Do not output greetings, headers, filler, reasoning, or raw JSON."
 )
 
 
 def _persona_instructions(persona: str) -> str:
     if persona == "CXO":
-        return ("Audience: CXO. Lead with the headline number and whether "
-                "the cause is resolved or unresolved. Give ONE strategic "
-                "action. Do NOT mention SKU/product-level details - only "
-                "category aggregates appear in your copy.")
-    return ("Audience: Category Manager. Be operational: name the specific "
-            "product(s), regions, dates and computed numbers from the JSON, "
-            "and give a tactical next action grounded in the recommendation "
-            "field.")
+        return ("Audience: CXO. Keep under 60 words. Lead with category headline and resolution status. "
+                "Give one high-level strategic action. Do NOT mention SKU or product names.")
+    return ("Audience: Category Manager. Keep under 75 words. Name the specific operational root cause, "
+            "product, key metric, and actionable next step.")
 
 
 # ------------------------------------------------------- offline fallback --
 def _offline_narrate(payload: dict, persona: str) -> str:
-    """Short analyst note assembled strictly from payload numbers."""
+    """Short executive brief assembled strictly from payload numbers (under 75 words)."""
     a = payload["alert"]
     rec = payload["recommendation"]
 
@@ -80,57 +77,42 @@ def _offline_narrate(payload: dict, persona: str) -> str:
 
     if payload["route"] == "FAST_PATH":
         fp = payload["fast_path"]
-        return (f"{a['kpi']} for {a['category']} / {a['region']} came in at "
-                f"{a['current_fmt']} vs a {a['baseline_fmt']} baseline "
-                f"({a['pct_fmt']}, impact {a['delta_fmt']}). A logged event "
-                f"explains it directly: [{fp['event_type']}] on "
-                f"{fp['event_date']} - {fp['description']}. Confidence 95%. "
-                f"Action: {rec['action']}")
+        return (f"{a['kpi']} for {a['category']} / {a['region']} moved "
+                f"{a['pct_fmt']} ({a['delta_fmt']}). Direct match: logged "
+                f"[{fp['event_type']}] on {fp['event_date']} ({fp['description']}). "
+                f"Confidence 95%. Action: {rec['action']}")
 
     winner = next((h for h in payload["hypotheses"] if h["supported"]),
                   payload["hypotheses"][0])
-    rejected = [h for h in payload["hypotheses"] if h is not winner]
     d = winner.get("detail", {})
 
     lines = []
     if persona == "CXO":
-        status = ("unresolved - flagged for review"
-                  if payload["route"] == "UNRESOLVED_CONFLICT"
-                  else f"explained at {winner.get('confidence_pct', 90)}% "
-                       f"confidence")
-        lines.append(f"{a['category']} {a['kpi'].lower()} in {a['region']} "
-                     f"is {a['pct_fmt']} vs baseline ({a['delta_fmt']}).")
-        lines.append(f"Cause: {winner['name'].lower()}, {status}.")
+        status = "flagged for review" if payload["route"] == "UNRESOLVED_CONFLICT" \
+            else f"verified at {winner.get('confidence_pct', 90)}% confidence"
+        lines.append(f"{a['category']} {a['kpi'].lower()} in {a['region']} is {a['pct_fmt']} vs baseline ({a['delta_fmt']}).")
+        lines.append(f"Root cause: {winner['name'].lower()} ({status}).")
         if payload["route"] == "UNRESOLVED_CONFLICT":
-            lines.append("Evidence conflicts across comparable regions - "
-                         "manual review advised.")
+            lines.append("Evidence conflicts across comparable regions — manual commercial audit advised.")
         lines.append(f"Strategic action: {rec['action']}")
         return " ".join(lines)
 
     # Category Manager
-    lines.append(f"{a['kpi']} for {a['category']} / {a['region']} is "
-                 f"{a['pct_fmt']} vs the trailing 4-week baseline "
-                 f"({a['delta_fmt']}).")
+    lines.append(f"{a['kpi']} for {a['category']} / {a['region']} is {a['pct_fmt']} vs baseline ({a['delta_fmt']}).")
     if winner["name"].startswith("Supply") and d:
-        lines.append(f"Cause: stock-out of {d.get('product_name')} - "
-                     f"expected {d.get('counterfactual_fmt')} over the "
-                     f"outage window vs {d.get('actual_fmt')} actual, i.e. "
-                     f"{d.get('explains_pct')}% of the move.")
+        pname = d.get('product_name', 'affected SKU')
+        lines.append(f"Root cause: stock-out of {pname} across {len(d.get('stockout_days', []))} days, explaining {d.get('explains_pct')}% of the revenue loss.")
     elif winner["name"].startswith("Operational") and d:
-        lines.append(f"Cause: operational disruption - [{d.get('event_type')}] "
-                     f"on {d.get('event_date')}: {d.get('description')}.")
+        lines.append(f"Root cause: operational disruption — [{d.get('event_type')}] on {d.get('event_date')}: {d.get('description')}.")
     else:
-        lines.append(f"Cause: {winner['name'].lower()} - "
-                     f"{winner['deciding_value']}")
-    for h in rejected[:3]:
-        lines.append(f"Ruled out: {h['name'].lower()} "
-                     f"({h['deciding_value'].split(';')[0]}).")
+        lines.append(f"Root cause: {winner['name']} — {winner['deciding_value'].split(';')[0]}.")
+    
     if payload["route"] == "UNRESOLVED_CONFLICT":
-        lines.append(f"Conflict: {payload['conflict']['signal_b']}")
-    lines.append(f"Confidence {winner.get('confidence_pct', 90)}%. "
-                 f"Action: {rec['action']}"
-                 + (f" Est. recovery {rec['est_impact_fmt']}/wk."
-                    if rec.get("est_impact_fmt") else ""))
+        lines.append("Contradiction: comparable region showed opposite trajectory — manual audit required.")
+    else:
+        lines.append(f"Confidence {winner.get('confidence_pct', 90)}%. Action: {rec['action']}")
+        if rec.get("est_impact_fmt"):
+            lines.append(f"Est. recovery {rec['est_impact_fmt']}/wk.")
     return " ".join(lines)
 
 

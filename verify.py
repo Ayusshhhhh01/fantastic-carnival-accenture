@@ -70,12 +70,15 @@ for persona in ("Category Manager", "CXO"):
     payload = redact_for_cxo(dict(primary)) if persona == "CXO" else dict(primary)
     text, eng = llm.narrate(payload, persona)
     clean, removed, audit = llm.self_verify(text, payload)
-    print(f"\n--- {persona} [{eng}] audit=[{audit}] removed={len(removed)}")
-    print(clean[:600])
+    word_count = len(clean.split())
+    assert 30 <= word_count <= 95, f"Narration word count {word_count} out of range [30..95] for {persona}"
+    assert "{" not in clean and "}" not in clean, "Raw JSON syntax found in narration"
+    print(f"\n--- {persona} [{eng}] audit=[{audit}] words={word_count} removed={len(removed)}")
+    print(clean)
 
 print("\n--- LEDGER ---")
 for r in P["ledger_rows"]:
-    print(f"  {r['step']:45s} {r['engine']:16s} {r['latency_ms']:>8}ms  {r['note'][:55]}")
+    print(f"  {r['step']:45s} {r['engine']:22s} {r['latency_ms']:>8}ms  {r['note'][:55]}")
 
 # CXO redaction check
 cxo = redact_for_cxo(dict(primary))

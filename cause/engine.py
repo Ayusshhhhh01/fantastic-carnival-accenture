@@ -30,6 +30,7 @@ PRICE_MOVE_MIN = 0.05         # >= 5% price change counts as material
 KPI_REGISTRY = {
     "Revenue": {
         "display_name": "Gross Revenue",
+        "role_in_pipeline": "Anomaly Detection Signal",
         "formula": "Σ(units_sold × unit_price)",
         "grain": "Weekly (resampled from Daily POS)",
         "source_table": "sales_daily.csv",
@@ -40,6 +41,7 @@ KPI_REGISTRY = {
     },
     "Marketing Spend": {
         "display_name": "Marketing Spend",
+        "role_in_pipeline": "Anomaly Detection Signal",
         "formula": "Σ(campaign_spend)",
         "grain": "Weekly (CRM campaign cycle)",
         "source_table": "campaigns_weekly.csv",
@@ -50,6 +52,7 @@ KPI_REGISTRY = {
     },
     "Units Sold": {
         "display_name": "Volume / Units Sold",
+        "role_in_pipeline": "Connected Causal Evidence / Driver",
         "formula": "Σ(units_sold)",
         "grain": "Weekly (resampled from Daily POS)",
         "source_table": "sales_daily.csv",
@@ -60,6 +63,7 @@ KPI_REGISTRY = {
     },
     "Stockout Incident Days": {
         "display_name": "Stockout Incident Exposure",
+        "role_in_pipeline": "Connected Causal Evidence / Driver",
         "formula": "Count(stock_out_flag == 1)",
         "grain": "Daily ERP inventory telemetry",
         "source_table": "inventory_daily.csv",
@@ -70,6 +74,7 @@ KPI_REGISTRY = {
     },
     "Average Realized Price": {
         "display_name": "Average Realized Unit Price",
+        "role_in_pipeline": "Connected Causal Evidence / Driver",
         "formula": "Gross Revenue / Units Sold",
         "grain": "Weekly (resampled from Daily POS)",
         "source_table": "sales_daily.csv",
@@ -963,7 +968,7 @@ def analyze_alert(alert, sales, camps_wk, sales_wk, inv, changelog, ledger, retr
                "Direct event match found" if fp else "No logged event matched")
     payload["fast_path"] = fp
 
-    # Step 3.5 RAG Evidence Retrieval
+    # Step 3.5 Evidence Retrieval Layer
     t0_rag = time.perf_counter()
     if retriever is None:
         retriever = TelemetryRetriever(sales, camps_wk, inv, changelog)
@@ -973,8 +978,8 @@ def analyze_alert(alert, sales, camps_wk, sales_wk, inv, changelog, ledger, retr
         week_start=alert["week_start"],
         top_k=5
     )
-    ledger.add(f"Step 3.5 RAG Evidence Retrieval {aid}", "RAG / Retrieval", t0_rag,
-               f"Retrieved {len(rag_evidence)} empirical evidence records across POS, CRM, ERP & Change Log")
+    ledger.add(f"Step 3.5 Evidence Retrieval {aid}", "Multi-Source Retrieval", t0_rag,
+               f"Retrieved {len(rag_evidence)} empirical telemetry evidence records across POS, CRM, ERP & Change Log")
     payload["rag_evidence"] = rag_evidence
 
     if fp:

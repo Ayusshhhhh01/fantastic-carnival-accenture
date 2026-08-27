@@ -713,58 +713,74 @@ def rca_modal():
                   help="Removes this alert from your queue",
                   on_click=make_ignorer(al["id"]))
 
-    # ------------------ Step 2 : Diagnosing Execution Trace ------------------
+    # ------------------ Step 2 : Automated Triage Scan (Path 1 -> Path 2) ------------------
     elif ss["stage"] == "diagnosing":
         key = ("diag", al["id"])
         if key not in ss["played"]:
             fp = A["fast_path"]
-            steps = [("Aligning data sources to common weekly grain…",
-                      "sales (daily) + campaigns (weekly) reconciled")]
-            steps.append(("Scanning ops Change Log…",
-                          "direct match found" if fp else "no match — escalating to deep path"))
-
-            pkey = persona["llm_persona"]
-            access_note = ("CXO — SKU/product fields will be redacted, category aggregates only"
-                           if pkey == "CXO" else "Category Manager — full operational detail permitted")
-
+            
+            st.subheader("Automated Triage Scan")
+            st.caption("Dual-path diagnostic evaluation: Direct Event Match (Path 1) → Deep Causal Inference (Path 2)")
+            
+            p1_box = st.empty()
+            p2_box = st.empty()
+            
+            # --- Path 1: Direct Match Scan ---
             if fp:
-                steps.append((f"Checking access permissions ({pkey})…", access_note))
+                p1_box.markdown(f"""
+                <div style='background:#FFFFFF;border:1.5px solid {ACCENT_PURPLE_BORDER};border-radius:10px;padding:12px 16px;margin-bottom:10px;'>
+                    <div style='display:flex;justify-content:space-between;align-items:center;'>
+                        <div style='font-size:12px;font-weight:750;color:{ACCENT_PURPLE_DARK};letter-spacing:0.04em;'>PATH 1 · DIRECT EVENT MATCH</div>
+                        <span style='background:{GOOD_BG};color:{GOOD};font-size:11px;font-weight:750;padding:2px 8px;border-radius:99px;border:1px solid {GOOD_BORDER};'>MATCH FOUND</span>
+                    </div>
+                    <div style='font-size:13.5px;font-weight:700;color:{TEXT_PRIMARY};margin-top:6px;'>
+                        ✓ Direct operational event matched: [{fp['event_type']}] on {fp['event_date']}
+                    </div>
+                    <div style='font-size:12px;color:{TEXT_MUTED};margin-top:2px;'>
+                        {fp['description']} — Bypassing Path 2 to Recommendation
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+                time.sleep(0.5)
             else:
-                for h in hyps:
-                    steps.append((f"Testing {h['name']}…",
-                                  f"{h['confidence_pct']}% · {'supported' if h['supported'] else 'rejected'}"))
-                steps.append((f"Checking access permissions ({pkey})…", access_note))
-                steps.append(("Scoring confidence with per-candidate weights…", "done"))
-
-            st.subheader("Diagnosing…")
-            bar = st.progress(0.0, text="Executing causal inference engine…")
-            lines = [st.empty() for _ in steps]
-            for i, (txt, done) in enumerate(steps):
-                lines[i].markdown(f"""
-                <div style='background:#FAF5FF;border:1px solid {ACCENT_PURPLE_BORDER};border-radius:8px;padding:9px 12px;margin-bottom:6px;display:flex;align-items:center;justify-content:space-between;'>
-                    <div style='display:flex;align-items:center;gap:10px;'>
-                        <span style='color:{ACCENT_PURPLE};font-weight:800;font-size:14px;'>⚡</span>
-                        <span style='font-size:13px;font-weight:600;color:{TEXT_PRIMARY};'>{txt}</span>
+                p1_box.markdown(f"""
+                <div style='background:#FFFFFF;border:1px solid {LINE_BORDER};border-radius:10px;padding:12px 16px;margin-bottom:10px;'>
+                    <div style='display:flex;justify-content:space-between;align-items:center;'>
+                        <div style='font-size:12px;font-weight:750;color:{TEXT_MUTED};letter-spacing:0.04em;'>PATH 1 · DIRECT EVENT MATCH</div>
+                        <span style='background:{SURFACE_BG};color:{TEXT_MUTED};font-size:11px;font-weight:750;padding:2px 8px;border-radius:99px;border:1px solid {LINE_BORDER};'>NO MATCH</span>
                     </div>
-                    <span style='background:{ACCENT_PURPLE_LIGHT};color:{ACCENT_PURPLE_DARK};font-size:10.5px;font-weight:750;padding:2px 8px;border-radius:99px;border:1px solid {ACCENT_PURPLE_BORDER};'>EXECUTING</span>
+                    <div style='font-size:13px;font-weight:600;color:{TEXT_SECONDARY};margin-top:6px;'>
+                        Scanning operational change log... <span style='color:{TEXT_MUTED};'>No direct event found</span>
+                    </div>
+                    <div style='font-size:12px;color:{TEXT_MUTED};margin-top:2px;'>
+                        Escalating to Path 2: Deep Causal Analysis
+                    </div>
                 </div>
                 """, unsafe_allow_html=True)
-                time.sleep(0.35)
-                lines[i].markdown(f"""
-                <div style='background:#FFFFFF;border:1px solid {LINE_BORDER};border-radius:8px;padding:9px 12px;margin-bottom:6px;display:flex;align-items:center;justify-content:space-between;box-shadow:0 1px 3px rgba(0,0,0,0.02);'>
-                    <div style='display:flex;align-items:center;gap:10px;'>
-                        <span style='color:{GOOD};font-weight:800;font-size:14px;'>✓</span>
-                        <div>
-                            <div style='font-size:13px;font-weight:700;color:{TEXT_PRIMARY};'>{txt}</div>
-                            <div style='font-size:11.5px;color:{TEXT_MUTED};margin-top:1px;'>— {done}</div>
-                        </div>
+                time.sleep(0.3)
+                
+                # --- Path 2: Deep Causal Inference ---
+                res_txt = "Insufficient Evidence (Abstain)" if route == "ABSTAIN" else \
+                    ("Contradiction Flagged" if route == "UNRESOLVED_CONFLICT" else "Causal Analysis Complete")
+                badge_bg = WARN_BG if route == "ABSTAIN" else (CONF_BG if route == "UNRESOLVED_CONFLICT" else GOOD_BG)
+                badge_fg = WARN if route == "ABSTAIN" else (CONF if route == "UNRESOLVED_CONFLICT" else GOOD)
+                badge_bd = WARN_BORDER if route == "ABSTAIN" else (CONF_BORDER if route == "UNRESOLVED_CONFLICT" else GOOD_BORDER)
+                
+                p2_box.markdown(f"""
+                <div style='background:#FFFFFF;border:1.5px solid {ACCENT_PURPLE_BORDER};border-radius:10px;padding:12px 16px;'>
+                    <div style='display:flex;justify-content:space-between;align-items:center;'>
+                        <div style='font-size:12px;font-weight:750;color:{ACCENT_PURPLE_DARK};letter-spacing:0.04em;'>PATH 2 · DEEP CAUSAL INFERENCE</div>
+                        <span style='background:{badge_bg};color:{badge_fg};font-size:11px;font-weight:750;padding:2px 8px;border-radius:99px;border:1px solid {badge_bd};'>{res_txt.upper()}</span>
                     </div>
-                    <span style='background:{GOOD_BG};color:{GOOD};font-size:10.5px;font-weight:750;padding:2px 8px;border-radius:99px;border:1px solid {GOOD_BORDER};'>VERIFIED</span>
+                    <div style='margin-top:8px;font-size:12.5px;color:{TEXT_PRIMARY};display:flex;flex-direction:column;gap:4px;'>
+                        <div><span style='color:{GOOD};font-weight:800;'>✓</span> Multi-source evidence retrieved across POS, CRM, ERP & logs</div>
+                        <div><span style='color:{GOOD};font-weight:800;'>✓</span> 4 competing hypotheses tested & counterfactuals evaluated</div>
+                        <div><span style='color:{GOOD};font-weight:800;'>✓</span> Weighted evidence confidence scored & cross-region contradiction evaluated</div>
+                    </div>
                 </div>
                 """, unsafe_allow_html=True)
-                bar.progress((i + 1) / len(steps), text=f"Step {i + 1} of {len(steps)} verified")
+                time.sleep(0.5)
 
-            time.sleep(0.25)
             ss["played"].add(key)
             if fp:
                 ss.update(stage="recommendation", sel=None)
@@ -777,10 +793,13 @@ def rca_modal():
     # ------------------ Step 3 : Abstention Fallback ------------------
     elif ss["stage"] == "abstain":
         header_line()
+        abst = A.get("abstention", {})
         with st.container(border=True):
             st.markdown(pill("INSUFFICIENT EVIDENCE", WARN, WARN_BG, WARN_BORDER, "⚠"), unsafe_allow_html=True)
             st.write("")
-            st.warning(A["abstention"]["message"])
+            st.warning(f"**Diagnostic Abstention:** {abst.get('reason', 'Insufficient baseline data.')}\n\n"
+                       f"• **Missing Telemetry:** {abst.get('missing_data', 'Sparse history.')}\n"
+                       f"• **Required Data:** {abst.get('required_data', 'Collect further observations.')}")
             st.caption("The pipeline stopped here by design — CAUSE will not generate an explanation the data cannot support. No LLM was called.")
         st.write("")
         if st.button("← Back to Dashboard", type="primary", width="stretch"):
@@ -795,9 +814,8 @@ def rca_modal():
             st.caption("Comparable regions show contradicting outcomes for the leading "
                        "cause. Expand it below for details before approving any action.")
             st.write("")
-        st.caption("Candidates revealed as their tests complete · Confidence = W₁·Temporal + W₂·Source Reliability + W₃·Contrary Stats + W₄·Evidence Density, weighted per candidate type")
+        st.caption("Confidence = weighted combination of temporal correlation, source reliability, hypothesis margin, and data completeness.")
         
-        first = ("rca", al["id"]) not in ss["played"]
         for i, h in enumerate(hyps):
             tp, tcol = tier_pill(h["confidence_pct"])
             badge = pill("SUPPORTED", GOOD, GOOD_BG, GOOD_BORDER, "✓") if h["supported"] \
@@ -815,10 +833,6 @@ def rca_modal():
                     c3.markdown(tp, unsafe_allow_html=True)
                     c3.button("Expand", key=f"ex_{al['id']}_{i}", width="stretch",
                               on_click=lambda i=i: ss.update(stage="rca_expand", sel=i))
-            if first:
-                time.sleep(0.35)
-        if first:
-            ss["played"].add(("rca", al["id"]))
 
         st.divider()
         _, mid, _ = st.columns([1, 2, 1])
@@ -848,12 +862,12 @@ def rca_modal():
 
         row2_col1, row2_col2 = st.columns(2, gap="medium")
         with row2_col1, st.container(border=True):
-            st.markdown(f"<span style='font-size:12px;font-weight:800;color:{ACCENT_PURPLE_DARK};letter-spacing:.05em;text-transform:uppercase;'>HOW THE SCORE WAS CALCULATED</span>", unsafe_allow_html=True)
+            st.markdown(f"<span style='font-size:12px;font-weight:800;color:{ACCENT_PURPLE_DARK};letter-spacing:.05em;text-transform:uppercase;'>WEIGHTED EVIDENCE BREAKDOWN</span>", unsafe_allow_html=True)
             w = h["weights"]; f = h["factors"]
             for k in ("temporal_correlation", "source_agreement", "hypothesis_margin", "data_completeness"):
                 sym, lbl = FACTOR_LABELS[k]
                 fv = round(f[k] * 100)
-                st.markdown(f"<span style='color:{TEXT_MUTED};font-size:12.5px;font-weight:600;'>{sym} {w[k]:.2f} × {lbl}</span><span style='float:right;color:{TEXT_PRIMARY};font-size:12.5px;font-weight:750;'>&nbsp;&nbsp;= {fv}% × {w[k]:.2f}</span>", unsafe_allow_html=True)
+                st.markdown(f"<span style='color:{TEXT_MUTED};font-size:12px;font-weight:600;'>{sym} {w[k]:.2f} × {lbl}</span><span style='float:right;color:{TEXT_PRIMARY};font-size:12px;font-weight:750;'>&nbsp;&nbsp;= {fv}% × {w[k]:.2f}</span>", unsafe_allow_html=True)
             st.write("")
             conf_bar(h["confidence_pct"])
 
@@ -868,13 +882,13 @@ def rca_modal():
             else:
                 st.success("No contradicting signals across comparable regions.")
 
-        # RAG Retrieved Evidence Citations
-        rag_cites = h.get("rag_citations") or A.get("rag_evidence", [])
-        if rag_cites:
+        # Multi-Source Evidence Citations
+        cites = h.get("rag_citations") or A.get("rag_evidence", [])
+        if cites:
             st.write("")
             with st.container(border=True):
-                st.markdown(f"<span style='font-size:12px;font-weight:800;color:{ACCENT_PURPLE_DARK};letter-spacing:.05em;text-transform:uppercase;'>RETRIEVED RAG EVIDENCE CITATIONS</span>", unsafe_allow_html=True)
-                for rc in rag_cites[:3]:
+                st.markdown(f"<span style='font-size:12px;font-weight:800;color:{ACCENT_PURPLE_DARK};letter-spacing:.05em;text-transform:uppercase;'>RETRIEVED MULTI-SOURCE EVIDENCE</span>", unsafe_allow_html=True)
+                for rc in cites[:3]:
                     st.markdown(f"""
                     <div style='background:{SURFACE_BG};border:1px solid {LINE_BORDER};border-radius:6px;padding:6px 10px;margin-bottom:6px;font-size:12px;'>
                         <div style='display:flex;justify-content:space-between;color:{TEXT_MUTED};font-size:11px;font-weight:700;'>
@@ -892,7 +906,7 @@ def rca_modal():
         b2.button("See Recommendation", type="primary", width="stretch", key=f"sr_{al['id']}",
                   on_click=lambda: ss.update(stage="recommendation"))
 
-    # ------------------ Step 6 : Executive Recommendation & LLM Brief ------------------
+    # ------------------ Step 6 : Executive Recommendation & Decision Brief ------------------
     elif ss["stage"] == "recommendation":
         rec = A["recommendation"]
         header_line()
@@ -900,15 +914,16 @@ def rca_modal():
         lead = next((x for x in hyps if x["supported"]), None)
         if lead:
             ltp, lcol = tier_pill(lead["confidence_pct"])
-            st.markdown(f"Based on leading candidate **{lead['name']}** at <b style='color:{lcol};'>{lead['confidence_pct']}%</b> &nbsp;{ltp}", unsafe_allow_html=True)
+            st.markdown(f"Leading candidate: **{lead['name']}** at <b style='color:{lcol};'>{lead['confidence_pct']}%</b> &nbsp;{ltp}", unsafe_allow_html=True)
 
+        # 1. Action Subheader & Impact
         st.subheader(rec.get("action", "Recommended Action Directive"))
         if rec.get("est_impact_fmt"):
             st.markdown(f"Expected recovery: <b style='font-size:16px;color:{GOOD};'>{rec['est_impact_fmt']} / wk</b> <span style='color:{TEXT_MUTED};font-size:12px;'>({rec.get('basis', '')})</span>", unsafe_allow_html=True)
         else:
             st.caption("Basis: " + str(rec.get("basis", "")))
 
-        # 7-Part Canonical Recommendation Metadata Matrix
+        # 2. Compact 7-Part Metadata Matrix
         with st.container(border=True):
             rm1, rm2 = st.columns(2)
             with rm1:
@@ -919,13 +934,13 @@ def rca_modal():
                 st.markdown(f"<span style='color:{TEXT_MUTED};font-size:11px;font-weight:750;text-transform:uppercase;'>Confidence:</span> <span style='font-size:12.5px;font-weight:600;color:{TEXT_PRIMARY};'>{rec.get('confidence', 'High')}</span>", unsafe_allow_html=True)
                 st.markdown(f"<span style='color:{TEXT_MUTED};font-size:11px;font-weight:750;text-transform:uppercase;'>Monitoring Plan:</span> <span style='font-size:12.5px;font-weight:600;color:{TEXT_PRIMARY};'>{rec.get('monitoring_plan', 'Daily telemetry tracking')}</span>", unsafe_allow_html=True)
 
-        # FIX 5: Persona preview toggle
+        # 3. Persona Toggle
         pkey = persona["llm_persona"]
         other_persona = "CXO" if pkey == "Category Manager" else "Category Manager"
         if st.toggle(f"Preview as {other_persona}", key=f"preview_{al['id']}"):
             pkey = other_persona
 
-        # Audited Natural Language Narration Box
+        # 4. Compact Audited LLM Explanation Box (under 75 words)
         with st.container(border=True):
             st.markdown(pill("LLM EXPLANATION · AUTO-AUDITED", ACCENT_PURPLE_DARK, ACCENT_PURPLE_LIGHT, ACCENT_PURPLE_BORDER, "⚡"), unsafe_allow_html=True)
             
@@ -946,9 +961,9 @@ def rca_modal():
             N = ss["narrations"][nkey]
             skey = ("stream", al["id"], pkey)
             if skey in ss["played"]:
-                st.markdown(N["clean"])
+                st.markdown(f"<div style='font-size:13.5px;line-height:1.55;color:{TEXT_PRIMARY};font-weight:500;'>{N['clean']}</div>", unsafe_allow_html=True)
             else:
-                def typewriter(txt, chunk=2, tick=0.008):
+                def typewriter(txt, chunk=2, tick=0.006):
                     for j in range(0, len(txt), chunk):
                         yield txt[:j + chunk]
                         time.sleep(tick)
@@ -961,7 +976,7 @@ def rca_modal():
                 
             st.caption("Generated strictly from the verified JSON above · " + audit_pill, unsafe_allow_html=True)
 
-        # Decision validation form
+        # 5. Decision validation form
         reason = st.selectbox(
             "Before you decide — anything off?",
             ["", "Not enough evidence", "Wrong cause identified", "Already resolved", "Other"],
@@ -977,35 +992,35 @@ def rca_modal():
         f2.button("Reject", width="stretch", key=f"rj_{al['id']}",
                   on_click=make_decider(al["id"], al, route, "rejected"))
 
-        # Step 9-10 Evidence Ledger Expander (Deterministic, RAG, LLM)
+        # 6. Evidence Ledger Expander (Deterministic, Evidence Retrieval, LLM Audited)
         st.write("")
         with st.expander("Evidence Ledger & Lineage Audit Trail", expanded=False):
             c1, c2, c3 = st.columns(3)
             with c1:
-                st.markdown(f"<span style='color:{ACCENT_PURPLE_DARK};font-weight:700;font-size:12px;'>DETERMINISTIC</span>", unsafe_allow_html=True)
-                for line in ["Anomaly detection (z-score vs baseline)",
+                st.markdown(f"<span style='color:{ACCENT_PURPLE_DARK};font-weight:700;font-size:12px;'>DETERMINISTIC INFERENCE</span>", unsafe_allow_html=True)
+                for line in ["Anomaly detection (|z| ≥ 1.5 & |Δ| ≥ 10%)",
                              "Source reconciliation (grain alignment)",
                              "Change Log lookup (Fast Path)",
                              "Hypothesis testing (4 counterfactuals)",
-                             "Bayesian confidence formula (W₁–W₄)",
+                             "Weighted evidence formula (W₁–W₄)",
                              "Conflict check (cross-region)",
                              "Access gate (CXO SKU scrub)"]:
                     st.caption("✓ " + line)
             with c2:
-                st.markdown(f"<span style='color:{ACCENT_PURPLE_DARK};font-weight:700;font-size:12px;'>RAG / RETRIEVAL</span>", unsafe_allow_html=True)
+                st.markdown(f"<span style='color:{ACCENT_PURPLE_DARK};font-weight:700;font-size:12px;'>MULTI-SOURCE RETRIEVAL</span>", unsafe_allow_html=True)
                 st.caption("✓ Multi-source evidence indexing")
                 st.caption("✓ Contextual telemetry chunk retrieval")
                 st.caption("✓ Provenance & citation binding")
-                st.caption("✓ Empirical feedback weight calibration")
+                st.caption("✓ Empirical feedback calibration")
             with c3:
-                st.markdown(f"<span style='color:{ACCENT_PURPLE_DARK};font-weight:700;font-size:12px;'>LLM (AUDITED)</span>", unsafe_allow_html=True)
+                st.markdown(f"<span style='color:{ACCENT_PURPLE_DARK};font-weight:700;font-size:12px;'>LLM NARRATION (AUDITED)</span>", unsafe_allow_html=True)
                 st.caption("✓ Narrative generation (verified JSON)")
                 st.caption("✓ Self-verification claim auditor")
                 st.caption("✓ Zero numeric hallucination gate")
             st.divider()
             st.caption(f"2 LLM calls · narration {N.get('narrate_latency', 0):.1f}s · "
                        f"verification {N.get('verify_latency', 0):.1f}s · "
-                       f"RAG & deterministic steps ~instant")
+                       f"retrieval & deterministic steps ~instant")
 
 
 if ss["open_aid"]:

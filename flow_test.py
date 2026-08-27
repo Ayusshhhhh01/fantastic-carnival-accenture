@@ -47,7 +47,7 @@ print("percent scores shown:", pcts)
 [b for b in at.button if b.label == "Expand"][0].click().run()
 mds = " ".join(m.value for m in at.markdown)
 for sec in ["VERDICT", "DATA SNAPSHOT",
-            "SCORE WAS CALCULATED", "CONTRADICTION"]:
+            "WEIGHTED EVIDENCE BREAKDOWN", "CONTRADICTION"]:
     assert sec in mds, f"missing {sec}"
 assert "= " in mds and "%" in mds
 print("expand shows 4 sections + computed formula result")
@@ -92,7 +92,7 @@ click(at, "Switch persona")
 [b for b in at.button if b.key == "card_A3"][0].click().run()
 click(at, "Diagnose")
 warns = " ".join(w.value for w in at.warning)
-assert "Insufficient evidence" in warns, warns
+assert "Diagnostic Abstention" in warns or "Insufficient" in warns, warns
 assert not [b for b in at.button if b.label.startswith("Continue")]
 back = [b for b in at.button if b.label == "← Back to Dashboard"]
 assert back
