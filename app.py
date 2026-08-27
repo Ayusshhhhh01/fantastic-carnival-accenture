@@ -434,7 +434,9 @@ def flash_toast():
 
 
 # =========================================================== 1. ACCENTURE LANDING / LOGIN SCREEN ==
-if ss["current_persona"] is None:
+current_persona = ss.get("current_persona")
+if current_persona not in PERSONAS:
+    ss["current_persona"] = None
     st.write("")
     # Top Accenture Brand Ribbon
     st.markdown(f"""
@@ -495,9 +497,13 @@ if ss["current_persona"] is None:
 
 
 # =========================================================== 2. ACCENTURE EXECUTIVE DASHBOARD ==
-persona = PERSONAS[ss["current_persona"]]
+current_persona = ss.get("current_persona")
+if current_persona not in PERSONAS:
+    st.stop()
+
+persona = PERSONAS[current_persona]
 flash_toast()
-my_alerts = alerts_for(ss["current_persona"])
+my_alerts = alerts_for(current_persona)
 active = [a for a in my_alerts if a["alert"]["id"] not in ss["handled"]]
 handled_ids = [a["alert"]["id"] for a in my_alerts if a["alert"]["id"] in ss["handled"]]
 
@@ -518,7 +524,7 @@ with nav_col2:
 # Executive KPI Ribbon
 tot_impact = sum(abs(a["alert"]["delta_inr"]) for a in active)
 high_conf_cnt = len([a for a in active if a["route"] in ("RESOLVED", "FAST_PATH")])
-scope_txt = ("All categories" if ss["current_persona"] == "cxo" else " & ".join(persona["cats"]))
+scope_txt = ("All categories" if current_persona == "cxo" else " & ".join(persona["cats"]))
 
 kpi1, kpi2, kpi3, kpi4 = st.columns(4)
 with kpi1, st.container(border=True):
