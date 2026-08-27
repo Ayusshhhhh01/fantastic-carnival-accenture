@@ -48,6 +48,7 @@ GOOD, GOOD_BG, GOOD_BORDER = "#065F38", "#E6F9F0", "#8CE6B8"
 CONF, CONF_BG, CONF_BORDER = "#9C140E", "#FEECEB", "#FCA5A0"
 WARN, WARN_BG, WARN_BORDER = "#8A4B00", "#FFF7E6", "#FFD580"
 INFO, INFO_BG, INFO_BORDER = "#0047B3", "#DEEBFF", "#A3C7FF"
+MEDI, MEDI_BG, MEDI_BORDER = "#3B4A6B", "#EAEDF5", "#B8C4DC"  # neutral blue-grey, distinct from WARN amber
 
 # ------------------------------------------------------------- ACCENTURE STYLES --
 st.markdown(f"""<style>
@@ -247,7 +248,7 @@ def tier_pill(p):
     if p >= 75:
         return pill("HIGH CONFIDENCE", GOOD, GOOD_BG, GOOD_BORDER, "✓"), GOOD
     if p >= 50:
-        return pill("MEDIUM CONFIDENCE", WARN, WARN_BG, WARN_BORDER, "●"), WARN
+        return pill("MEDIUM CONFIDENCE", MEDI, MEDI_BG, MEDI_BORDER, "●"), MEDI
     return pill("LOW CONFIDENCE", CONF, CONF_BG, CONF_BORDER, "!"), CONF
 
 
@@ -269,6 +270,16 @@ def route_pill(route):
     }
     fg, bg, bd, ic = m.get(route, (TEXT_MUTED, SURFACE_BG, LINE_BORDER, ""))
     return pill(ROUTE_LABEL.get(route, route), fg, bg, bd, ic)
+
+
+def verification_rate():
+    """% of narrations generated this session with zero unsupported claims removed."""
+    all_narrations = ss.get("narrations", {})
+    if not all_narrations:
+        return None  # nothing generated yet this session
+    total = len(all_narrations)
+    clean = sum(1 for n in all_narrations.values() if not n.get("removed"))
+    return round(clean / total * 100)
 
 
 def alerts_for(pid):
@@ -539,11 +550,15 @@ with kpi3, st.container(border=True):
     """, unsafe_allow_html=True)
 
 with kpi4, st.container(border=True):
+    vrate = verification_rate()
+    vrate_display = f"{vrate}%" if vrate is not None else "—"
+    vrate_caption = (f"{sum(1 for n in ss['narrations'].values() if not n.get('removed'))} of {len(ss['narrations'])} narrations clean"
+                     if vrate is not None else "No diagnoses run yet this session")
     st.markdown(f"""
     <div style='padding:2px;'>
-        <div style='font-size:11px;font-weight:750;color:{TEXT_MUTED};letter-spacing:0.05em;text-transform:uppercase;'>Engine Verification</div>
-        <div style='font-size:24px;font-weight:800;color:{ACCENT_PURPLE_DARK};margin:4px 0 1px;'>100%</div>
-        <div style='font-size:12px;color:{TEXT_SECONDARY};font-weight:500;'>Zero-Hallucination Verified</div>
+        <div style='font-size:11px;font-weight:750;color:{TEXT_MUTED};letter-spacing:0.05em;text-transform:uppercase;'>Narrative Verification Rate</div>
+        <div style='font-size:24px;font-weight:800;color:{ACCENT_PURPLE_DARK};margin:4px 0 1px;'>{vrate_display}</div>
+        <div style='font-size:12px;color:{TEXT_SECONDARY};font-weight:500;'>{vrate_caption}</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -699,12 +714,17 @@ def rca_modal():
                       "sales (daily) + campaigns (weekly) reconciled")]
             steps.append(("Scanning ops Change Log…",
                           "direct match found" if fp else "no match — escalating to deep path"))
-            if not fp:
+
+            pkey = persona["llm_persona"]
+            access_note = ("CXO — SKU/product fields will be redacted, category aggregates only"
+                           if pkey == "CXO" else "Category Manager — full operational detail permitted")
+
+            if fp:
+                steps.append((f"Checking access permissions ({pkey})…", access_note))
+            else:
                 for h in hyps:
-                    steps.append((f"Testing {h['name']}…", f"{h['confidence_pct']}% · {'supported' if h['supported'] else 'rejected'}"))
-                pkey = persona["llm_persona"]
-                access_note = ("CXO — SKU/product fields will be redacted, category aggregates only"
-                               if pkey == "CXO" else "Category Manager — full operational detail permitted")
+                    steps.append((f"Testing {h['name']}…",
+                                  f"{h['confidence_pct']}% · {'supported' if h['supported'] else 'rejected'}"))
                 steps.append((f"Checking access permissions ({pkey})…", access_note))
                 steps.append(("Scoring confidence with per-candidate weights…", "done"))
 
