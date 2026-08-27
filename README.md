@@ -2,7 +2,7 @@
 
 CAUSE is a retail anomaly-diagnosis application. It detects material telemetry changes, tests competing causes against evidence, assigns confidence, and produces an auditable recommendation.
 
-The supported application is a React frontend served by a FastAPI backend. Streamlit is optional and is retained only for the original demo UI.
+The supported application is a React frontend served by a FastAPI backend.
 
 ## Quick Start: Single Port
 
@@ -70,19 +70,6 @@ docker compose up --build
 
 Open [http://localhost:8000/](http://localhost:8000/).
 
-## Is Streamlit Required?
-
-No. Streamlit is not required for the React + FastAPI application.
-
-The core dependencies are in [requirements.txt](requirements.txt). The old Streamlit application in [app.py](app.py) and its click-through test in [flow_test.py](flow_test.py) are kept as an optional compatibility path.
-
-Install Streamlit only when you need the legacy UI:
-
-```powershell
-.\venv\Scripts\python.exe -m pip install -r requirements-streamlit.txt
-.\venv\Scripts\python.exe -m streamlit run app.py
-```
-
 ## LLM Behavior
 
 The causal recommendation is deterministic and does not require an API key. The pipeline computes:
@@ -132,7 +119,7 @@ frontend/src/pages/          Page compositions
 frontend/src/router/         Future client-side route definitions
 data/                        Raw, processed, and generated data boundaries
 scripts/                     Repeatable utilities
-cause/                       Validated legacy engine compatibility package
+cause/                       Deterministic engine and demo data generator
 ```
 
 ## Data and Decisions
