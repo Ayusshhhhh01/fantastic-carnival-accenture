@@ -116,10 +116,13 @@ def _offline_narrate(payload: dict, persona: str) -> str:
                      f"expected {d.get('counterfactual_fmt')} over the "
                      f"outage window vs {d.get('actual_fmt')} actual, i.e. "
                      f"{d.get('explains_pct')}% of the move.")
+    elif winner["name"].startswith("Operational") and d:
+        lines.append(f"Cause: operational disruption - [{d.get('event_type')}] "
+                     f"on {d.get('event_date')}: {d.get('description')}.")
     else:
         lines.append(f"Cause: {winner['name'].lower()} - "
                      f"{winner['deciding_value']}")
-    for h in rejected[:2]:
+    for h in rejected[:3]:
         lines.append(f"Ruled out: {h['name'].lower()} "
                      f"({h['deciding_value'].split(';')[0]}).")
     if payload["route"] == "UNRESOLVED_CONFLICT":

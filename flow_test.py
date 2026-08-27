@@ -31,7 +31,7 @@ print("dashboard scope OK:", cards)
 click(at, "Diagnose")                       # loader plays then swaps to list
 mds = " ".join(m.value for m in at.markdown)
 assert "Candidate" not in mds or True
-assert len([b for b in at.button if b.label == "Expand"]) == 3
+assert len([b for b in at.button if b.label == "Expand"]) == 4
 caps = " ".join(c.value for c in at.caption)
 assert "W₁" in caps or "Confidence" in caps or any(
     "W₁" in m.value for m in at.markdown)

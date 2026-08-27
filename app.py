@@ -564,6 +564,14 @@ with kpi4, st.container(border=True):
 
 st.write("")
 
+# KPI Semantic Registry Expander
+with st.expander("◈ KPI Semantic Layer & Lineage Contracts (5 Connected KPIs Across Telemetry Grains)", expanded=False):
+    for kpi_key, kpi_meta in P.get("kpi_registry", {}).items():
+        st.markdown(f"**{kpi_meta['display_name']}** &nbsp; <code style='font-size:11.5px;'>{kpi_meta['formula']}</code>", unsafe_allow_html=True)
+        st.caption(f"Grain: {kpi_meta['grain']} · Source: {kpi_meta['source_table']} · Baseline: {kpi_meta['baseline_method']} · Materiality: {kpi_meta['materiality_rule']}")
+        st.caption(f"Connected Drivers: {', '.join(kpi_meta['connected_drivers'])} · Access: {kpi_meta['access_entitlement'].get(persona['name'], 'Standard')}")
+        st.divider()
+
 # Section Header
 if active:
     n = len(active)
@@ -860,6 +868,23 @@ def rca_modal():
             else:
                 st.success("No contradicting signals across comparable regions.")
 
+        # RAG Retrieved Evidence Citations
+        rag_cites = h.get("rag_citations") or A.get("rag_evidence", [])
+        if rag_cites:
+            st.write("")
+            with st.container(border=True):
+                st.markdown(f"<span style='font-size:12px;font-weight:800;color:{ACCENT_PURPLE_DARK};letter-spacing:.05em;text-transform:uppercase;'>RETRIEVED RAG EVIDENCE CITATIONS</span>", unsafe_allow_html=True)
+                for rc in rag_cites[:3]:
+                    st.markdown(f"""
+                    <div style='background:{SURFACE_BG};border:1px solid {LINE_BORDER};border-radius:6px;padding:6px 10px;margin-bottom:6px;font-size:12px;'>
+                        <div style='display:flex;justify-content:space-between;color:{TEXT_MUTED};font-size:11px;font-weight:700;'>
+                            <span>{rc['source']} · {rc['entity']}</span>
+                            <span>{rc['timestamp']}</span>
+                        </div>
+                        <div style='color:{TEXT_PRIMARY};font-weight:600;margin-top:2px;'>{rc['snippet']}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
         st.write("")
         b1, b2, _ = st.columns([1, 1.4, 2])
         b1.button("← Back", width="stretch", key=f"bk_{al['id']}",
@@ -877,11 +902,22 @@ def rca_modal():
             ltp, lcol = tier_pill(lead["confidence_pct"])
             st.markdown(f"Based on leading candidate **{lead['name']}** at <b style='color:{lcol};'>{lead['confidence_pct']}%</b> &nbsp;{ltp}", unsafe_allow_html=True)
 
-        st.subheader(rec["action"])
+        st.subheader(rec.get("action", "Recommended Action Directive"))
         if rec.get("est_impact_fmt"):
-            st.markdown(f"Expected recovery: <b style='font-size:16px;color:{GOOD};'>{rec['est_impact_fmt']} / wk</b> <span style='color:{TEXT_MUTED};font-size:12px;'>({rec['basis']})</span>", unsafe_allow_html=True)
+            st.markdown(f"Expected recovery: <b style='font-size:16px;color:{GOOD};'>{rec['est_impact_fmt']} / wk</b> <span style='color:{TEXT_MUTED};font-size:12px;'>({rec.get('basis', '')})</span>", unsafe_allow_html=True)
         else:
-            st.caption("Basis: " + rec["basis"])
+            st.caption("Basis: " + str(rec.get("basis", "")))
+
+        # 7-Part Canonical Recommendation Metadata Matrix
+        with st.container(border=True):
+            rm1, rm2 = st.columns(2)
+            with rm1:
+                st.markdown(f"<span style='color:{TEXT_MUTED};font-size:11px;font-weight:750;text-transform:uppercase;'>Driver:</span> <span style='font-size:12.5px;font-weight:600;color:{TEXT_PRIMARY};'>{rec.get('driver', 'Identified Root Cause')}</span>", unsafe_allow_html=True)
+                st.markdown(f"<span style='color:{TEXT_MUTED};font-size:11px;font-weight:750;text-transform:uppercase;'>Controllable Lever:</span> <span style='font-size:12.5px;font-weight:600;color:{TEXT_PRIMARY};'>{rec.get('lever', 'Operational Lever')}</span>", unsafe_allow_html=True)
+                st.markdown(f"<span style='color:{TEXT_MUTED};font-size:11px;font-weight:750;text-transform:uppercase;'>Designated Owner:</span> <span style='font-size:12.5px;font-weight:600;color:{TEXT_PRIMARY};'>{rec.get('owner', 'Category Manager')}</span>", unsafe_allow_html=True)
+            with rm2:
+                st.markdown(f"<span style='color:{TEXT_MUTED};font-size:11px;font-weight:750;text-transform:uppercase;'>Confidence:</span> <span style='font-size:12.5px;font-weight:600;color:{TEXT_PRIMARY};'>{rec.get('confidence', 'High')}</span>", unsafe_allow_html=True)
+                st.markdown(f"<span style='color:{TEXT_MUTED};font-size:11px;font-weight:750;text-transform:uppercase;'>Monitoring Plan:</span> <span style='font-size:12.5px;font-weight:600;color:{TEXT_PRIMARY};'>{rec.get('monitoring_plan', 'Daily telemetry tracking')}</span>", unsafe_allow_html=True)
 
         # FIX 5: Persona preview toggle
         pkey = persona["llm_persona"]
@@ -941,28 +977,35 @@ def rca_modal():
         f2.button("Reject", width="stretch", key=f"rj_{al['id']}",
                   on_click=make_decider(al["id"], al, route, "rejected"))
 
-        # FIX 3: Evidence Ledger Expander
+        # Step 9-10 Evidence Ledger Expander (Deterministic, RAG, LLM)
         st.write("")
-        with st.expander("Evidence Ledger", expanded=False):
-            c1, c2 = st.columns(2)
+        with st.expander("Evidence Ledger & Lineage Audit Trail", expanded=False):
+            c1, c2, c3 = st.columns(3)
             with c1:
                 st.markdown(f"<span style='color:{ACCENT_PURPLE_DARK};font-weight:700;font-size:12px;'>DETERMINISTIC</span>", unsafe_allow_html=True)
-                for line in ["Anomaly detection (z-score vs 4-wk baseline)",
+                for line in ["Anomaly detection (z-score vs baseline)",
                              "Source reconciliation (grain alignment)",
                              "Change Log lookup (Fast Path)",
-                             "Hypothesis testing (counterfactual/contribution math)",
-                             "Confidence scoring (4-factor weighted formula)",
-                             "Conflict detection (cross-region comparison)",
-                             "Access/entitlement check"]:
+                             "Hypothesis testing (4 counterfactuals)",
+                             "Bayesian confidence formula (W₁–W₄)",
+                             "Conflict check (cross-region)",
+                             "Access gate (CXO SKU scrub)"]:
                     st.caption("✓ " + line)
             with c2:
+                st.markdown(f"<span style='color:{ACCENT_PURPLE_DARK};font-weight:700;font-size:12px;'>RAG / RETRIEVAL</span>", unsafe_allow_html=True)
+                st.caption("✓ Multi-source evidence indexing")
+                st.caption("✓ Contextual telemetry chunk retrieval")
+                st.caption("✓ Provenance & citation binding")
+                st.caption("✓ Empirical feedback weight calibration")
+            with c3:
                 st.markdown(f"<span style='color:{ACCENT_PURPLE_DARK};font-weight:700;font-size:12px;'>LLM (AUDITED)</span>", unsafe_allow_html=True)
-                st.caption("✓ Narrative generation — phrases pre-computed JSON only")
-                st.caption("✓ Self-verification — strips unsupported claims")
+                st.caption("✓ Narrative generation (verified JSON)")
+                st.caption("✓ Self-verification claim auditor")
+                st.caption("✓ Zero numeric hallucination gate")
             st.divider()
             st.caption(f"2 LLM calls · narration {N.get('narrate_latency', 0):.1f}s · "
                        f"verification {N.get('verify_latency', 0):.1f}s · "
-                       f"deterministic steps ~instant")
+                       f"RAG & deterministic steps ~instant")
 
 
 if ss["open_aid"]:

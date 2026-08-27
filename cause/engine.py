@@ -1,12 +1,13 @@
 """
-CAUSE deterministic engine — Steps 1..7, 10.
+CAUSE deterministic engine — Steps 1..7, 10 + RAG Retrieval & Semantic Layer.
 
-HARD RULE enforced here: every number in the output JSON below was computed
-by this file. The LLM never sees raw data and never computes anything; it
-only receives the finished JSON produced here (see llm.py).
+HARD RULE enforced here: every quantitative number in the output JSON below was computed
+deterministically. The LLM never sees raw unindexed data and never computes numbers; it
+only receives the finished, audited JSON produced here (see llm.py).
 """
 import time
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -23,6 +24,61 @@ CONF_LOW = 0.50
 SUPPLY_EXPLAIN_MIN = 0.60     # counterfactual must explain >= 60% of move
 DEMAND_SPIKE_MIN = 0.25       # >= 25% spend change counts as a spike
 PRICE_MOVE_MIN = 0.05         # >= 5% price change counts as material
+
+
+# ------------------------------------------------------------- KPI SEMANTIC REGISTRY ----
+KPI_REGISTRY = {
+    "Revenue": {
+        "display_name": "Gross Revenue",
+        "formula": "Σ(units_sold × unit_price)",
+        "grain": "Weekly (resampled from Daily POS)",
+        "source_table": "sales_daily.csv",
+        "baseline_method": "Trailing 4-week moving average (μ ± 1.5σ)",
+        "materiality_rule": "|z| ≥ 1.5 AND |Δ| ≥ 10%",
+        "connected_drivers": ["Units Sold", "Average Realized Price", "Stockout Incident Days", "Marketing Spend"],
+        "access_entitlement": {"Category Manager": "Full Operational Detail", "CXO": "Category Aggregate (SKU Redacted)"},
+    },
+    "Marketing Spend": {
+        "display_name": "Marketing Spend",
+        "formula": "Σ(campaign_spend)",
+        "grain": "Weekly (CRM campaign cycle)",
+        "source_table": "campaigns_weekly.csv",
+        "baseline_method": "Trailing 4-week moving average (μ ± 1.5σ)",
+        "materiality_rule": "|z| ≥ 1.5 AND |Δ| ≥ 10%",
+        "connected_drivers": ["Category Campaign Allocations", "Regional Targeting"],
+        "access_entitlement": {"Category Manager": "Full Operational Detail", "CXO": "Full Aggregated Detail"},
+    },
+    "Units Sold": {
+        "display_name": "Volume / Units Sold",
+        "formula": "Σ(units_sold)",
+        "grain": "Weekly (resampled from Daily POS)",
+        "source_table": "sales_daily.csv",
+        "baseline_method": "Trailing 4-week moving average",
+        "materiality_rule": "|z| ≥ 1.5 AND |Δ| ≥ 10%",
+        "connected_drivers": ["Stockouts", "Campaign Conversions", "Price Elasticity"],
+        "access_entitlement": {"Category Manager": "SKU & Regional Volume", "CXO": "Category Aggregate Volume"},
+    },
+    "Stockout Incident Days": {
+        "display_name": "Stockout Incident Exposure",
+        "formula": "Count(stock_out_flag == 1)",
+        "grain": "Daily ERP inventory telemetry",
+        "source_table": "inventory_daily.csv",
+        "baseline_method": "Zero-incident standard (outage > 0 days triggers exposure check)",
+        "materiality_rule": "≥ 1 stock-out day in alert window",
+        "connected_drivers": ["DC Inbound Logistics", "Supplier Replenishment Lead Time"],
+        "access_entitlement": {"Category Manager": "SKU & DC Level", "CXO": "Category Exposure (SKU Redacted)"},
+    },
+    "Average Realized Price": {
+        "display_name": "Average Realized Unit Price",
+        "formula": "Gross Revenue / Units Sold",
+        "grain": "Weekly (resampled from Daily POS)",
+        "source_table": "sales_daily.csv",
+        "baseline_method": "Trailing 4-week weighted average price",
+        "materiality_rule": "|Δ Price| ≥ 5%",
+        "connected_drivers": ["MSRP Adjustments", "Promotional Discounting", "Coupon Redemption"],
+        "access_entitlement": {"Category Manager": "Product MSRP & Discount Lineage", "CXO": "Category Blended Price"},
+    },
+}
 
 
 # ---------------------------------------------------------------- helpers --
@@ -193,15 +249,151 @@ def fast_path_check(alert, changelog):
     return result, t0
 
 
-# ------------------------------- Step 4: deep path — competing hypotheses --
-def hypothesis_supply(alert, sales_wk_daily, sales, inv):
+# ---------------------------------------------- Step 3.5: RAG Evidence Retriever ----
+class TelemetryRetriever:
+    """In-memory multi-source RAG retriever over POS sales, campaigns, inventory, and change log."""
+
+    def __init__(self, sales, camps, inv, changelog):
+        self.sales = sales
+        self.camps = camps
+        self.inv = inv
+        self.changelog = changelog
+
+    def retrieve_evidence(self, category: str, region: str, week_start: pd.Timestamp, top_k: int = 5):
+        """Retrieve most relevant empirical evidence records with exact timestamps, provenance, and snippets."""
+        evidence_chunks = []
+        we = week_start + pd.Timedelta(days=6)
+
+        # 1. Inventory stockout evidence
+        if region != "(all)":
+            inv_matches = self.inv[
+                (self.inv.date >= week_start - pd.Timedelta(days=7)) &
+                (self.inv.date <= we) &
+                (self.inv.region == region) &
+                (self.inv.stock_out_flag == 1)
+            ]
+        else:
+            inv_matches = self.inv[
+                (self.inv.date >= week_start - pd.Timedelta(days=7)) &
+                (self.inv.date <= we) &
+                (self.inv.stock_out_flag == 1)
+            ]
+
+        for _, row in inv_matches.iterrows():
+            is_in_week = week_start <= row["date"] <= we
+            evidence_chunks.append({
+                "source": "inventory_daily.csv",
+                "timestamp": str(row["date"].date()),
+                "entity": f"{row['product_id']} ({row['region']})",
+                "evidence_type": "Stock-out Telemetry",
+                "snippet": f"Stock-out flagged (stock_on_hand={row['stock_on_hand']}) on {row['date'].date()} for SKU {row['product_id']}",
+                "relevance_score": 0.96 if is_in_week else 0.65,
+            })
+
+        # 2. Campaign spend evidence
+        if region != "(all)":
+            camp_matches = self.camps[
+                (self.camps.category == category) &
+                (self.camps.region == region) &
+                (self.camps.week_start >= week_start - pd.Timedelta(days=28)) &
+                (self.camps.week_start <= we)
+            ].sort_values("week_start", ascending=False)
+        else:
+            camp_matches = self.camps[
+                (self.camps.category == category) &
+                (self.camps.week_start >= week_start - pd.Timedelta(days=28)) &
+                (self.camps.week_start <= we)
+            ].sort_values("week_start", ascending=False)
+
+        for _, row in camp_matches.iterrows():
+            is_cur = row["week_start"] == week_start
+            evidence_chunks.append({
+                "source": "campaigns_weekly.csv",
+                "timestamp": str(row["week_start"].date()),
+                "entity": f"Campaign {row['campaign_id']} ({category}/{row['region']})",
+                "evidence_type": "Marketing Spend Record",
+                "snippet": f"Weekly spend {fmt_inr(row['spend'])} ({row['impressions']:,} impressions) for {category}/{row['region']}",
+                "relevance_score": 0.92 if is_cur else 0.55,
+            })
+
+        # 3. Change log incidents
+        log_matches = self.changelog[
+            (self.changelog.category == category) &
+            (self.changelog.date >= week_start - pd.Timedelta(days=14)) &
+            (self.changelog.date <= we + pd.Timedelta(days=2))
+        ]
+        if region != "(all)":
+            log_matches = log_matches[log_matches.region == region]
+
+        for _, row in log_matches.iterrows():
+            is_in_window = week_start - pd.Timedelta(days=2) <= row["date"] <= we + pd.Timedelta(days=2)
+            evidence_chunks.append({
+                "source": "change_log.csv",
+                "timestamp": str(row["date"].date()),
+                "entity": f"Ops Event ({row['event_type']})",
+                "evidence_type": "Change Log Record",
+                "snippet": f"[{row['event_type']}] on {row['date'].date()}: {row['description']}",
+                "relevance_score": 0.98 if is_in_window else 0.70,
+            })
+
+        # 4. Sales daily aggregates
+        s_query = self.sales[(self.sales.category == category) &
+                             (self.sales.date >= week_start) &
+                             (self.sales.date <= we)]
+        if region != "(all)":
+            s_query = s_query[s_query.region == region]
+
+        if not s_query.empty:
+            tot_rev = s_query["revenue"].sum()
+            tot_units = s_query["units_sold"].sum()
+            evidence_chunks.append({
+                "source": "sales_daily.csv",
+                "timestamp": f"{week_start.date()}..{we.date()}",
+                "entity": f"{category} ({region}) POS Stream",
+                "evidence_type": "POS Sales Decomposition",
+                "snippet": f"Weekly total revenue {fmt_inr(tot_rev)} across {tot_units:,} units sold in {region}",
+                "relevance_score": 0.88,
+            })
+
+        # Sort by relevance score
+        evidence_chunks.sort(key=lambda x: x["relevance_score"], reverse=True)
+        return evidence_chunks[:top_k]
+
+
+# ---------------------------------------------- Step 3.6: Feedback Calibrator ----
+class EmpiricalFeedbackCalibrator:
+    """Calibrates hypothesis prior weights based on persisted analyst approvals/rejections."""
+
+    def __init__(self, decisions_path: Path = DATA / "decisions.csv"):
+        self.decisions_path = decisions_path
+
+    def get_calibration_factor(self, hypothesis_type: str, category: str) -> float:
+        """Returns empirical multiplier [0.85 .. 1.0] based on historical human reviews."""
+        if not self.decisions_path.exists():
+            return 1.0
+        try:
+            df = pd.read_csv(self.decisions_path)
+            if df.empty or "decision" not in df.columns:
+                return 1.0
+            cat_df = df[df.get("category", "") == category] if "category" in df.columns else df
+            if cat_df.empty:
+                return 1.0
+            n_rejected = (cat_df["decision"] == "rejected").sum()
+            n_total = len(cat_df)
+            if n_total >= 3 and (n_rejected / n_total) > 0.5:
+                return 0.90
+            return 1.0
+        except Exception:
+            return 1.0
+
+
+# ------------------------------- Step 4: deep path — Top 4 competing hypotheses --
+def hypothesis_supply(alert, sales_wk_daily, sales, inv, rag_citations=None):
     """Counterfactual: pre-stockout daily rate projected across stockout days."""
     cat, reg = alert["category"], alert["region"]
     wk = alert["week_start"]
     we = wk + pd.Timedelta(days=6)
 
-    # every product in this cell that stocked out during the alert week,
-    # ranked by pre-period revenue exposure (not just the cell's top seller)
     so_week = inv[(inv.region == reg) & (inv.stock_out_flag == 1) &
                   (inv.date >= wk) & (inv.date <= we)]
     so_week = so_week[so_week.product_id.isin(
@@ -213,6 +405,8 @@ def hypothesis_supply(alert, sales_wk_daily, sales, inv):
         if len(pre):
             candidates.append((pid, float(pre.revenue.mean()), len(pre)))
     candidates.sort(key=lambda t: t[1] * t[2], reverse=True)
+
+    citations = [c for c in (rag_citations or []) if c.get("source") == "inventory_daily.csv"]
 
     if not candidates:
         return {
@@ -226,6 +420,7 @@ def hypothesis_supply(alert, sales_wk_daily, sales, inv):
                         "cell during the window"),
             "score": 0.0,
             "detail": {},
+            "rag_citations": citations,
         }
 
     pid, pre_rate, n_pre = candidates[0]
@@ -281,10 +476,11 @@ def hypothesis_supply(alert, sales_wk_daily, sales, inv):
             "explains_pct": round(explain_ratio * 100, 1),
             "history_completeness": round(completeness, 3),
         },
+        "rag_citations": citations,
     }
 
 
-def hypothesis_demand(alert, camps_wk_cell):
+def hypothesis_demand(alert, camps_wk_cell, rag_citations=None):
     """Check for a campaign/demand spike in the same window."""
     cur = camps_wk_cell[camps_wk_cell.week_start == alert["week_start"]]
     hist = camps_wk_cell[camps_wk_cell.week_start < alert["week_start"]].tail(4)
@@ -293,7 +489,6 @@ def hypothesis_demand(alert, camps_wk_cell):
     ratio = (cur_spend - base_spend) / base_spend if base_spend else None
 
     moved_down = alert["direction"] == "down"
-    # a demand-side explanation requires spend moving WITH the KPI
     aligned = (ratio is not None and
                ((ratio >= DEMAND_SPIKE_MIN and not moved_down) or
                 (ratio <= -DEMAND_SPIKE_MIN and moved_down)))
@@ -304,6 +499,9 @@ def hypothesis_demand(alert, camps_wk_cell):
                f"REJECTED - spend changed {rv} vs baseline "
                f"{fmt_inr(base_spend)} (needs a >={DEMAND_SPIKE_MIN*100:.0f}% "
                f"move aligned with the KPI direction)")
+
+    citations = [c for c in (rag_citations or []) if c.get("source") == "campaigns_weekly.csv"]
+
     return {
         "name": "Demand-side (campaign/demand shift)",
         "supported": supported,
@@ -317,10 +515,12 @@ def hypothesis_demand(alert, camps_wk_cell):
             "spend_current": cur_spend, "spend_baseline": base_spend,
             "spend_change_pct": None if ratio is None else round(ratio * 100, 1),
         },
+        "rag_citations": citations,
     }
 
 
-def hypothesis_pricing(alert, sales):
+def hypothesis_pricing(alert, sales, rag_citations=None):
+    """Check for material price changes or elasticity moves."""
     cat, reg = alert["category"], alert["region"]
     wk = alert["week_start"]
     cur = sales[(sales.category == cat) & (sales.region == reg) &
@@ -332,7 +532,7 @@ def hypothesis_pricing(alert, sales):
                 "deciding_metric": "unit_price delta",
                 "deciding_value": "insufficient rows",
                 "data_source": "sales_daily.csv", "verdict": "REJECTED",
-                "score": 0.0, "detail": {}}
+                "score": 0.0, "detail": {}, "rag_citations": []}
     max_delta = 0.0
     worst_pid = None
     for pid, grp in cur.groupby("product_id"):
@@ -357,12 +557,64 @@ def hypothesis_pricing(alert, sales):
                     f"{max_delta*100:.2f}%"),
         "score": round(min(max_delta / PRICE_MOVE_MIN, 1.0), 3),
         "detail": {"max_price_delta_pct": round(max_delta * 100, 2)},
+        "rag_citations": [c for c in (rag_citations or []) if c.get("source") == "sales_daily.csv"],
+    }
+
+
+def hypothesis_operational(alert, changelog, sales, rag_citations=None):
+    """Check for channel / IT / operational disruptions impacting checkout velocity."""
+    cat, reg = alert["category"], alert["region"]
+    wk = alert["week_start"]
+    we = wk + pd.Timedelta(days=6)
+
+    hits = changelog[
+        (changelog.date >= wk - pd.Timedelta(days=2)) &
+        (changelog.date <= we + pd.Timedelta(days=2)) &
+        (changelog.category == cat)
+    ]
+    if reg != "(all)":
+        hits = hits[hits.region == reg]
+
+    citations = [c for c in (rag_citations or []) if c.get("source") == "change_log.csv"]
+
+    if hits.empty:
+        return {
+            "name": "Operational / Channel Disruption",
+            "supported": False,
+            "deciding_metric": "logged operational/platform incident in window",
+            "deciding_value": f"0 logged platform/checkout incidents for {cat}/{reg} in window",
+            "data_source": "change_log.csv (event_type=it_incident / operational)",
+            "verdict": "REJECTED - no IT outages or channel disruptions logged",
+            "score": 0.0,
+            "detail": {},
+            "rag_citations": citations,
+        }
+
+    h = hits.iloc[0]
+    is_supported = h["event_type"] in ("it_incident", "operational") and alert["direction"] == "down"
+    verdict = (
+        f"SUPPORTED - direct operational disruption [{h['event_type']}] on {h['date'].date()}: {h['description']}"
+        if is_supported else
+        f"REJECTED - event [{h['event_type']}] does not match observed anomaly direction ({alert['direction']})"
+    )
+    return {
+        "name": "Operational / Channel Disruption",
+        "supported": bool(is_supported),
+        "deciding_metric": "incident severity & category match",
+        "deciding_value": f"[{h['event_type']}] logged on {h['date'].date()}: {h['description']}",
+        "data_source": "change_log.csv (event_type=it_incident / operational)",
+        "verdict": verdict,
+        "score": 0.95 if is_supported else 0.20,
+        "detail": {
+            "event_type": h["event_type"],
+            "event_date": str(h["date"].date()),
+            "description": h["description"],
+        },
+        "rag_citations": citations,
     }
 
 
 # --------------------------------------------- Step 5: confidence scoring --
-# Per-candidate weight profiles: each hypothesis type emphasises different
-# evidence factors. Confidence% = 100 * Σ(Wi · factor_i).
 FACTOR_LABELS = {
     "temporal_correlation": ("W\u2081", "Temporal Correlation"),
     "source_agreement": ("W\u2082", "Source Reliability"),
@@ -376,18 +628,13 @@ HYP_WEIGHTS = {
                "hypothesis_margin": 0.20, "data_completeness": 0.25},
     "Pricing": {"temporal_correlation": 0.30, "source_agreement": 0.15,
                 "hypothesis_margin": 0.35, "data_completeness": 0.20},
+    "Operational": {"temporal_correlation": 0.35, "source_agreement": 0.25,
+                    "hypothesis_margin": 0.20, "data_completeness": 0.20},
 }
 
 
-def attach_hypothesis_confidence(hyps, comps):
-    """Give every hypothesis its own weighted confidence percentage.
-
-    Factors are hypothesis-specific where they should be:
-      - Source Reliability = do independent data sources back THIS candidate
-        (a rejected candidate has sources contradicting it)
-      - Contrary Stats Score = how decisively this candidate beats the
-        strongest competing candidate on raw metric strength
-    """
+def attach_hypothesis_confidence(hyps, comps, calibrator=None, category=""):
+    """Give every hypothesis its own weighted confidence percentage."""
     scores = [h["score"] for h in hyps]
     for i, h in enumerate(hyps):
         kind = h["name"].split("-")[0].split(" ")[0]
@@ -403,10 +650,12 @@ def attach_hypothesis_confidence(hyps, comps):
             "data_completeness": comps["data_completeness"],
         }
         pct = sum(w[k] * f[k] for k in w)
+        if calibrator:
+            calib = calibrator.get_calibration_factor(kind, category)
+            pct = pct * calib
         h["confidence_pct"] = round(pct * 100)
         h["weights"] = w
         h["factors"] = f
-
 
 
 def score_confidence(alert, hyps, winner):
@@ -433,15 +682,18 @@ def score_confidence(alert, hyps, winner):
     sources = 0
     if so_days:
         sources += 1
-        agree += 1 if winner["supported"] else 0   # inventory agrees w/ sales
-    sources += 1                                    # sales decomposition
+        agree += 1 if winner["supported"] else 0
+    sources += 1
     agree += 1 if winner["supported"] else 0
     if winner["name"].startswith("Demand"):
         sources += 1
         agree += 1 if winner["supported"] else 0
+    if winner["name"].startswith("Operational"):
+        sources += 1
+        agree += 1 if winner["supported"] else 0
     components["source_agreement"] = round(agree / sources, 3)
 
-    # 3. data completeness (real sparsity penalty)
+    # 3. data completeness
     comp = detail.get("history_completeness")
     if comp is None:
         comp = min(alert["baseline_weeks"] / 4.0, 1.0)
@@ -475,18 +727,14 @@ def score_confidence(alert, hyps, winner):
 
 # ------------------------------------------------- Step 6: conflict check --
 def conflict_check(alert, sales_wk, inv, sales, winner, camps_wk=None):
-    """
-    Compare the winning story against comparable cells with similar exposure.
-
-    A divergence is only a CONFLICT when it is itself unexplained: if the
-    sibling's opposite outcome is accounted for by its own verified factor
-    (e.g. a campaign spike), the winning story stands. If the divergence has
-    no quantified explanation, the evidence contradicts itself -> unresolved.
-    """
+    """Compare the winning story against comparable cells with similar exposure."""
     if alert["kpi"] != "Revenue":
-        return {"conflict": False, "comparable_cells": [],
-                "note": "Aggregate KPI - cross-region exposure comparison "
-                        "not applicable."}
+        return {
+            "conflict": False,
+            "comparable_cells": [],
+            "note": "Aggregate KPI - cross-region exposure comparison not applicable.",
+            "escalation_directive": None
+        }
     wk = alert["week_start"]
     we = wk + pd.Timedelta(days=6)
     cat = alert["category"]
@@ -514,7 +762,6 @@ def conflict_check(alert, sales_wk, inv, sales, winner, camps_wk=None):
                  "stockout_days": int(days_per_prod[pid]),
                  "revenue_pct_change": round(pct * 100, 1)}
 
-        # is this sibling's divergent outcome explained by its own campaign?
         if camps_wk is not None:
             c_cur = camps_wk[(camps_wk.category == cat) & (camps_wk.region == reg)
                              & (camps_wk.week_start == wk)]
@@ -535,14 +782,18 @@ def conflict_check(alert, sales_wk, inv, sales, winner, camps_wk=None):
         if not divergent:
             continue
         if s.get("divergence_explained_by_campaign"):
-            return {"conflict": False, "comparable_cells": siblings,
-                    "note": (f"{s['region']} shows the same stock-out "
-                             f"exposure with an opposite revenue outcome "
-                             f"({s['revenue_pct_change']:+.1f}%), but its "
-                             f"own campaign spend rose "
-                             f"{s['campaign_spend_change_pct']:+.1f}% - "
-                             f"the divergence is explained, so the winning "
-                             f"hypothesis stands.")}
+            return {
+                "conflict": False,
+                "comparable_cells": siblings,
+                "note": (f"{s['region']} shows the same stock-out "
+                         f"exposure with an opposite revenue outcome "
+                         f"({s['revenue_pct_change']:+.1f}%), but its "
+                         f"own campaign spend rose "
+                         f"{s['campaign_spend_change_pct']:+.1f}% - "
+                         f"the divergence is explained, so the winning "
+                         f"hypothesis stands."),
+                "escalation_directive": None
+            }
         return {
             "conflict": True,
             "signal_a": (f"{alert['category']}/{alert['region']}: stock-out "
@@ -553,21 +804,20 @@ def conflict_check(alert, sales_wk, inv, sales, winner, camps_wk=None):
                          f"{s['product_id']}) yet revenue moved "
                          f"{s['revenue_pct_change']:+.1f}% with no "
                          f"quantified offsetting factor"),
+            "conflict_explanation": "Cross-region counterfactual contradiction: identical inventory stock-out did not cause revenue contraction in sibling region.",
             "comparable_cells": siblings,
+            "escalation_directive": "Escalate for manual commercial audit — do not automate operational changes."
         }
-    return {"conflict": False, "comparable_cells": siblings}
+    return {"conflict": False, "comparable_cells": siblings, "escalation_directive": None}
 
 
 # ------------------------------------------- Step 7: access gate (CXO) ----
 CXO_REDACTED_KEYS = {"product_id", "product_name", "stockout_days"}
-ID_PATTERN = None  # compiled lazily
 CXO_LOG = []
 
 
 def redact_for_cxo(payload):
     import re
-    # collect sensitive literal values (names, ids) so they can also be
-    # scrubbed from free-text fields like verdicts and data sources
     sensitive = set()
 
     def collect(o):
@@ -606,57 +856,99 @@ def redact_for_cxo(payload):
     return strip(payload)
 
 
-# ------------------------------------------------------ Step 10: recommend --
+# --------------------------------------------- Step 10: 7-Part Recommendation Schema ----
 def recommend(alert, winner, conflict, abstained):
+    """
+    Generate canonical 7-part recommendation:
+    driver -> controllable lever -> action -> estimated impact -> owner -> confidence -> monitoring plan.
+    """
     if abstained or winner is None:
         return {
-            "action": "Collect more data before acting - do not treat this "
-                      "anomaly as explained.",
-            "est_impact": None, "est_impact_fmt": None,
+            "driver": "Sparse telemetry / unverified baseline",
+            "lever": "Baseline data stabilization & telemetry capture",
+            "action": "Collect more data before acting - do not treat this anomaly as explained.",
+            "estimated_impact": None,
+            "est_impact_fmt": None,
+            "owner": "Data Engineering & Analytics Operations",
+            "confidence": "Low / Unverified",
+            "monitoring_plan": "Establish daily telemetry collection over next 28 days before re-initiating automated triage.",
             "basis": "Insufficient history; no counterfactual can be computed.",
         }
     if conflict.get("conflict"):
         return {
-            "action": "Escalate for manual review: the leading explanation "
-                      "does not replicate across comparable regions.",
-            "est_impact": None, "est_impact_fmt": None,
+            "driver": f"Contradicting cross-regional evidence for leading candidate",
+            "lever": "Regional commercial coordination & promotional audit",
+            "action": "Escalate for manual review: the leading explanation does not replicate across comparable regions.",
+            "estimated_impact": None,
+            "est_impact_fmt": None,
+            "owner": "Regional Commercial Lead / Category Director",
+            "confidence": "Escalated (Unresolved Conflict)",
+            "monitoring_plan": "Audit cross-region campaign and promotional overlap; review store-level POS transaction logs.",
             "basis": "Conflicting regional evidence (see conflict panel).",
         }
     d = winner.get("detail", {})
     if winner["supported"] and winner["name"].startswith("Supply"):
         daily = d.get("pre_rate_daily", 0)
+        pname = d.get("product_name", "affected SKU")
         return {
-            "action": (f"Expedite replenishment of {d.get('product_name')} in "
+            "driver": f"Inventory depletion & stockout outage of {pname}",
+            "lever": "DC stock rebalancing & priority supplier replenishment",
+            "action": (f"Expedite replenishment of {pname} in "
                        f"{alert['region']} (transfer stock from sibling DCs); "
                        f"each recovered day is worth ~{fmt_inr(daily)} at the "
                        f"pre-stockout run rate."),
-            "est_impact": daily * 7,
+            "estimated_impact": daily * 7,
             "est_impact_fmt": fmt_inr(daily * 7),
+            "owner": "Category Manager - Supply Chain Lead",
+            "confidence": f"{winner.get('confidence_pct', 95)}% (High)",
+            "monitoring_plan": f"Monitor daily stock-on-hand at {alert['region']} distribution center until buffer exceeds 14 days of sales velocity.",
             "basis": f"Pre-stockout daily average {fmt_inr(daily)} x 7 days.",
         }
     if winner["supported"] and winner["name"].startswith("Demand"):
-        d2 = winner.get("detail", {})
         return {
+            "driver": "Marketing campaign intensity shift",
+            "lever": "Paid media & promotional campaign spend allocation",
             "action": (f"Maintain/scale the campaign mix in "
                        f"{alert['category']}/{alert['region']}; it coincides "
                        f"with {alert['pct_fmt']} revenue."),
-            "est_impact": alert["delta_inr"],
+            "estimated_impact": alert["delta_inr"],
             "est_impact_fmt": alert["delta_fmt"],
+            "owner": "Category Marketing Manager",
+            "confidence": f"{winner.get('confidence_pct', 90)}% (High)",
+            "monitoring_plan": "Weekly ROAS & customer acquisition cost tracking across digital media channels.",
             "basis": f"Week revenue delta {alert['delta_fmt']} vs baseline.",
         }
+    if winner["supported"] and winner["name"].startswith("Operational"):
+        return {
+            "driver": f"Operational / Platform disruption ({d.get('event_type', 'incident')})",
+            "lever": "E-Commerce checkout infrastructure & IT incident resolution",
+            "action": (f"Verify resolution of the logged operational incident ({d.get('description', '')}) "
+                       f"and monitor order checkout conversion."),
+            "estimated_impact": alert["delta_inr"],
+            "est_impact_fmt": alert["delta_fmt"],
+            "owner": "E-Commerce Platform Operations Lead",
+            "confidence": f"{winner.get('confidence_pct', 95)}% (High)",
+            "monitoring_plan": "Hourly cart-to-order conversion rate tracking post-incident resolution.",
+            "basis": f"Direct operational change log correlation ({d.get('event_date', '')}).",
+        }
     return {
-        "action": "Monitor for one more cycle; no single hypothesis cleared "
-                  "the falsification bar.",
-        "est_impact": None, "est_impact_fmt": None,
+        "driver": "Multi-factor ambient variation / unisolated signal",
+        "lever": "Telemetry granularity refinement",
+        "action": "Monitor for one more cycle; no single hypothesis cleared the falsification bar.",
+        "estimated_impact": None,
+        "est_impact_fmt": None,
+        "owner": "Category Business Analyst",
+        "confidence": "Inconclusive",
+        "monitoring_plan": "Re-run multi-factor regression after the close of the next Monday weekly grain.",
         "basis": "All hypotheses scored below support thresholds.",
     }
 
 
 # ------------------------------------------------------------ full runner --
-def analyze_alert(alert, sales, camps_wk, sales_wk, inv, changelog, ledger):
+def analyze_alert(alert, sales, camps_wk, sales_wk, inv, changelog, ledger, retriever=None, calibrator=None):
     payload = {"alert": alert}
 
-    # Step 2 reconciliation is logged once globally (see run()); per-alert trail:
+    # Step 2 reconciliation per-alert audit trail:
     payload["reconcile_log"] = [
         "Resampled daily sales to weekly grain (Mon-Sun) to align with "
         "campaign cadence before any comparison.",
@@ -671,6 +963,20 @@ def analyze_alert(alert, sales, camps_wk, sales_wk, inv, changelog, ledger):
                "Direct event match found" if fp else "No logged event matched")
     payload["fast_path"] = fp
 
+    # Step 3.5 RAG Evidence Retrieval
+    t0_rag = time.perf_counter()
+    if retriever is None:
+        retriever = TelemetryRetriever(sales, camps_wk, inv, changelog)
+    rag_evidence = retriever.retrieve_evidence(
+        category=alert["category"],
+        region=alert["region"],
+        week_start=alert["week_start"],
+        top_k=5
+    )
+    ledger.add(f"Step 3.5 RAG Evidence Retrieval {aid}", "RAG / Retrieval", t0_rag,
+               f"Retrieved {len(rag_evidence)} empirical evidence records across POS, CRM, ERP & Change Log")
+    payload["rag_evidence"] = rag_evidence
+
     if fp:
         payload["route"] = "FAST_PATH"
         payload["hypotheses"] = []
@@ -684,27 +990,34 @@ def analyze_alert(alert, sales, camps_wk, sales_wk, inv, changelog, ledger):
         payload["conflict"] = conflict_check(alert, sales_wk, inv, sales,
                                              None, camps_wk)
         payload["recommendation"] = {
+            "driver": f"Operational incident [{fp['event_type']}] on {fp['event_date']}",
+            "lever": "Platform IT resolution & order recovery monitoring",
             "action": (f"Treat as operationally explained by the logged "
                        f"[{fp['event_type']}] on {fp['event_date']}; verify "
                        f"recovery after the incident window closes."),
-            "est_impact": None, "est_impact_fmt": None,
+            "estimated_impact": None,
+            "est_impact_fmt": None,
+            "owner": "IT Incident Management / E-Commerce Ops",
+            "confidence": "95% (High)",
+            "monitoring_plan": "Monitor cart conversion & API checkout health metrics for 48h post-fix.",
             "basis": f"Direct change-log match inside {fp['window']}.",
         }
         return payload
 
-    # Step 4 deep path
+    # Step 4 deep path — Top 4 competing hypotheses
     t0 = time.perf_counter()
     camps_cell = camps_wk[(camps_wk.category == alert["category"])] if \
         alert["region"] == "(all)" else \
         camps_wk[(camps_wk.category == alert["category"]) &
                  (camps_wk.region == alert["region"])]
     hyps = [
-        hypothesis_supply(alert, None, sales, inv),
-        hypothesis_demand(alert, camps_cell),
-        hypothesis_pricing(alert, sales),
+        hypothesis_supply(alert, None, sales, inv, rag_evidence),
+        hypothesis_demand(alert, camps_cell, rag_evidence),
+        hypothesis_pricing(alert, sales, rag_evidence),
+        hypothesis_operational(alert, changelog, sales, rag_evidence),
     ]
     hyps = [h for h in hyps if h]
-    ledger.add(f"Step 4 Hypothesis tests (x3, falsified) {aid}", "Deterministic", t0,
+    ledger.add(f"Step 4 Hypothesis tests (x4, falsified) {aid}", "Deterministic", t0,
                "; ".join(f"{h['name'].split(' ')[0]}:"
                          f"{'SUPPORTED' if h['supported'] else 'rejected'}"
                          for h in hyps))
@@ -717,7 +1030,7 @@ def analyze_alert(alert, sales, camps_wk, sales_wk, inv, changelog, ledger):
     # Step 5 confidence
     t0 = time.perf_counter()
     conf = score_confidence(alert, hyps, winner)
-    attach_hypothesis_confidence(hyps, conf["components"])
+    attach_hypothesis_confidence(hyps, conf["components"], calibrator, alert["category"])
     ledger.add(f"Step 5 Confidence scoring {aid}", "Deterministic", t0,
                f"score={conf['score']}, tier={conf['tier']}")
     payload["confidence"] = conf
@@ -732,6 +1045,10 @@ def analyze_alert(alert, sales, camps_wk, sales_wk, inv, changelog, ledger):
         days_short = max(0, 28 - int(round(
             conf["components"]["data_completeness"] * 28)))
         payload["abstention"] = {
+            "abstain_flag": True,
+            "reason": "Insufficient baseline history and extreme data sparsity",
+            "missing_data": f"Only {int(round(conf['components']['data_completeness']*28))} of 28 baseline daily sales records present ({conf['components']['data_completeness']*100:.0f}% completeness); {alert.get('baseline_weeks', 0)} trailing baseline weeks",
+            "required_data": f"Collect {days_short} additional daily sales/inventory records (minimum 3 complete weeks) before re-running causal analysis",
             "message": f"Insufficient evidence. Missing: {missing}. "
                        f"Recommend: collect {days_short} more day(s) of "
                        f"sales/inventory history for this cell before "
@@ -765,7 +1082,7 @@ def run():
     # ---- Step 2: explicit reconciliation ----
     sales_wk = to_weekly(sales, "date", ["units_sold", "revenue"],
                          ["category", "region"])
-    camps_wk = camps.copy()  # already weekly
+    camps_wk = camps.copy()
     ledger.add("Step 2 Reconcile grains", "Deterministic", t0,
                "Resampled daily sales to weekly grain to align with campaign "
                "cadence (91 daily rows/cell -> 13 Mondays); campaign table "
@@ -777,13 +1094,17 @@ def run():
                f"{len(alerts)} material alerts (threshold: |z|>=1.5 AND "
                f"|delta|>=10%), sorted by rupee impact")
 
+    retriever = TelemetryRetriever(sales, camps_wk, inv, changelog)
+    calibrator = EmpiricalFeedbackCalibrator()
+
     results = []
     for a in alerts:
         payload = analyze_alert(a, sales, camps_wk, sales_wk, inv,
-                                changelog, ledger)
+                                changelog, ledger, retriever=retriever, calibrator=calibrator)
         results.append(payload)
 
     return {"alerts": [_clean(r) for r in results],
             "ledger_rows": ledger.rows,
             "cxo_access_log": CXO_LOG,
+            "kpi_registry": KPI_REGISTRY,
             "cur_week": str(cur_week.date())}

@@ -1,43 +1,70 @@
-"""Headless verification of all demo scenarios (no UI)."""
+"""Headless verification of all demo scenarios against Canonical CAUSE Architecture."""
 import json
-from cause.engine import run, redact_for_cxo
+from cause.engine import run, redact_for_cxo, KPI_REGISTRY, EmpiricalFeedbackCalibrator
 from cause import llm
 
 P = run()
 alerts = P["alerts"]
 
-print("=" * 78)
+print("=" * 80)
+print("CANONICAL CAUSE VERIFICATION — 10-STEP PIPELINE AUDIT")
+print("=" * 80)
+
+# 1. KPI Registry check
+assert len(KPI_REGISTRY) == 5, f"Expected 5 connected KPIs, got {len(KPI_REGISTRY)}"
+print(f"[✓] Step 1: KPI Semantic Layer defined ({len(KPI_REGISTRY)} connected KPIs across telemetry grains)")
+
 for a in alerts:
     al = a["alert"]
-    print(f"{al['id']} | {al['kpi']:15s} | {al['category']}/{al['region']}"
+    print(f"  {al['id']} | {al['kpi']:15s} | {al['category']}/{al['region']}"
           f" | {al['delta_fmt']} ({al['pct_fmt']}, z={al['z_fmt']})"
           f" -> route={a['route']}")
 
-print("=" * 78)
+print("\n" + "=" * 80)
 for a in alerts:
-    print(f"\n### {a['alert']['id']} — {a['route']} — "
-          f"{a['alert']['category']}/{a['alert']['region']}")
+    al = a["alert"]
+    print(f"\n### {al['id']} — {a['route']} — {al['category']}/{al['region']}")
+    
+    # 2. RAG evidence assertion
+    assert "rag_evidence" in a, f"Missing RAG evidence in {al['id']}"
+    print(f"    [RAG] Retrieved {len(a['rag_evidence'])} multi-source evidence citations")
+    
     if a["route"] == "ABSTAIN":
-        print("  ", a["abstention"]["message"])
-        print("   confidence:", json.dumps(a["confidence"]["components"]))
+        abst = a["abstention"]
+        assert abst.get("abstain_flag") is True
+        print("    [ABSTAIN] Reason:", abst["reason"])
+        print("              Missing:", abst["missing_data"])
+        print("              Required:", abst["required_data"])
         continue
-    for h in a.get("hypotheses", []):
-        print(f"    [{'SUP' if h['supported'] else 'REJ'}] {h['name']}: "
-              f"{h['deciding_value']}")
+        
+    # 3. Top 4 candidate hypotheses assertion for Deep Path
+    if a["route"] != "FAST_PATH":
+        hyps = a.get("hypotheses", [])
+        assert len(hyps) == 4, f"Expected TOP 4 candidate causes, got {len(hyps)}"
+        for h in hyps:
+            print(f"    [{'SUP' if h['supported'] else 'REJ'}] {h['name']}: "
+                  f"{h['confidence_pct']}% · {h['deciding_value'][:70]}")
+                  
+    # 4. Confidence
     c = a["confidence"]
-    print(f"    confidence={c['score']} tier={c['tier']} "
-          f"components={json.dumps(c['components'])}")
+    print(f"    [CONFIDENCE] {c['score']} tier={c['tier']} components={json.dumps(c['components'])}")
+    
+    # 5. Conflict check
     cf = a["conflict"]
     if cf["conflict"]:
-        print("    CONFLICT A:", cf["signal_a"])
-        print("             B:", cf["signal_b"])
-    elif a["route"] != "FAST_PATH":
-        print("    conflict=False; comparable:",
-              json.dumps(cf.get("comparable_cells")))
-    print("    REC:", a["recommendation"]["action"][:120])
+        assert "signal_a" in cf and "signal_b" in cf and "escalation_directive" in cf
+        print("    [CONFLICT A]:", cf["signal_a"])
+        print("    [CONFLICT B]:", cf["signal_b"])
+        print("    [ESCALATION]:", cf["escalation_directive"])
+        
+    # 6. 7-Part Recommendation assertion
+    rec = a["recommendation"]
+    for req_field in ("driver", "lever", "action", "owner", "confidence", "monitoring_plan", "basis"):
+        assert req_field in rec, f"Missing {req_field} in recommendation for {al['id']}"
+    print(f"    [REC 7-PART]: Driver: {rec['driver'][:40]} | Lever: {rec['lever'][:35]} | Owner: {rec['owner']}")
 
-# narration + self-verify smoke test on the primary alert
-print("\n" + "=" * 78)
+# Narration + self-verify smoke test on the primary alert
+print("\n" + "=" * 80)
 primary = alerts[0]
 for persona in ("Category Manager", "CXO"):
     payload = redact_for_cxo(dict(primary)) if persona == "CXO" else dict(primary)
@@ -48,12 +75,18 @@ for persona in ("Category Manager", "CXO"):
 
 print("\n--- LEDGER ---")
 for r in P["ledger_rows"]:
-    print(f"  {r['step']:45s} {r['engine']:14s} {r['latency_ms']:>8}ms  "
-          f"{r['note'][:60]}")
+    print(f"  {r['step']:45s} {r['engine']:16s} {r['latency_ms']:>8}ms  {r['note'][:55]}")
 
 # CXO redaction check
 cxo = redact_for_cxo(dict(primary))
 blob = json.dumps(cxo)
-assert "VoltX Pro" not in blob and "P101" not in blob.replace(
-    '"product_id": null', ""), "CXO leak!"
-print("\nCXO access gate: no SKU fields in redacted JSON ✓")
+assert "VoltX Pro" not in blob and "P101" not in blob.replace('"product_id": null', ""), "CXO leak!"
+print("\n[✓] CXO access gate: zero SKU leakage in redacted JSON & citations")
+
+# Calibrator smoke check
+calibrator = EmpiricalFeedbackCalibrator()
+assert 0.85 <= calibrator.get_calibration_factor("Supply", "Electronics") <= 1.05
+print("[✓] Empirical Feedback Calibrator active")
+
+print("\nALL CANONICAL CAUSE VERIFICATION CHECKS PASSED (100% COMPLIANT) ✓")
+
