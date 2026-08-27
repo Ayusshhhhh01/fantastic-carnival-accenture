@@ -1,0 +1,10 @@
+"""Business thresholds used by the deterministic causal engine."""
+
+Z_THRESHOLD = 1.5
+PCT_THRESHOLD = 0.10
+MIN_BASELINE_WEEKS = 3
+SPARSE_FLOOR = 0.50
+CONF_LOW = 0.50
+SUPPLY_EXPLAIN_MIN = 0.60
+DEMAND_SPIKE_MIN = 0.25
+PRICE_MOVE_MIN = 0.05

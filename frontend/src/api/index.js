@@ -1,0 +1,24 @@
+// Relative requests work when FastAPI serves the built UI and when Vite
+// proxies the same paths during local development.
+const API_URL = import.meta.env.VITE_API_URL || "";
+
+async function request(path, options = {}) {
+  const response = await fetch(`${API_URL}${path}`, {
+    headers: { "Content-Type": "application/json" },
+    ...options,
+  });
+  if (!response.ok) {
+    const detail = await response.json().catch(() => ({}));
+    throw new Error(detail.detail || `Request failed: ${response.status}`);
+  }
+  return response.json();
+}
+
+export const getDashboard = () => request("/api/v1/dashboard");
+export const getNarrative = (id, persona) =>
+  request(`/api/v1/alerts/${id}/narrative?persona=${encodeURIComponent(persona)}`);
+export const saveDecision = (id, body) =>
+  request(`/api/v1/alerts/${id}/decisions`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });

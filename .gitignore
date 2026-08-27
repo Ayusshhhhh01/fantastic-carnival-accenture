@@ -2,3 +2,26 @@ __pycache__/
 *.pyc
 cause/data/decisions.csv
 .venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# React/Vite dependencies and build output
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Editor and operating-system files
+.vscode/
+.idea/
+*.log
+Thumbs.db
+.DS_Store

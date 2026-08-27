@@ -1,0 +1,18 @@
+[project]
+name = "cause-platform"
+version = "1.0.0"
+description = "Retail causal intelligence platform"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115",
+  "numpy>=1.26",
+  "pandas>=2.2",
+  "pydantic>=2.8",
+  "pydantic-settings>=2.4",
+  "requests>=2.31",
+  "uvicorn[standard]>=0.30",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests", "backend/tests"]
