@@ -14,7 +14,9 @@
     "typescript": "latest",
     "react": "latest",
     "react-dom": "latest",
-    "lucide-react": "latest"
+    "react-router-dom": "latest",
+    "lucide-react": "latest",
+    "recharts": "latest"
   },
   "devDependencies": {}
 }

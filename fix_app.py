@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import re
+
+app_jsx_content = '''import { useEffect, useMemo, useState } from "react";
 import { BrowserRouter as Router, Routes, Route, useNavigate } from "react-router-dom";
 import { Activity, ArrowUpRight, Check, ChevronRight, CircleAlert, RefreshCw, X } from "lucide-react";
 import { getDashboard, getNarrative, investigateAlert, saveDecision } from "./api/index.js";
@@ -377,3 +379,10 @@ export default function App() {
     </Router>
   );
 }
+'''
+
+# Write the corrected file with UTF-8 encoding
+with open(r'c:\Users\Saketh Akella\sakethpersonal\sakethPrograms\accenture_hackathon\fantastic-carnival-accenture\frontend\src\App.jsx', 'w', encoding='utf-8') as f:
+    f.write(app_jsx_content)
+
+print("App.jsx has been fixed successfully!")

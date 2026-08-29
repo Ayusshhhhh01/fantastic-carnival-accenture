@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
@@ -20,3 +20,21 @@ class AnalysisResponse(BaseModel):
     fast_path: dict[str, Any] | None = None
     abstention: dict[str, Any] | None = None
     rag_evidence: list[dict[str, Any]] = []
+
+
+class InvestigationResponse(BaseModel):
+    """Response for investigation endpoint - includes path status."""
+    alert_id: str
+    alert: dict[str, Any]
+    route: str
+    path_type: Literal["FAST", "SLOW", "ABSTAIN"]
+    path_success: bool
+    hypotheses: list[dict[str, Any]]
+    confidence: dict[str, Any]
+    conflict: dict[str, Any] | None = None
+    recommendation: dict[str, Any] | None = None
+    fast_path: dict[str, Any] | None = None
+    abstention: dict[str, Any] | None = None
+    rag_evidence: list[dict[str, Any]] = []
+    persona: str
+    narrative: dict[str, Any] | None = None

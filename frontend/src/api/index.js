@@ -17,6 +17,10 @@ async function request(path, options = {}) {
 export const getDashboard = () => request("/api/v1/dashboard");
 export const getNarrative = (id, persona) =>
   request(`/api/v1/alerts/${id}/narrative?persona=${encodeURIComponent(persona)}`);
+export const getAlert = (id) =>
+  request(`/api/v1/alerts/${id}`);
+export const investigateAlert = (id, persona) =>
+  request(`/api/v1/alerts/${id}/investigate?persona=${encodeURIComponent(persona)}`);
 export const saveDecision = (id, body) =>
   request(`/api/v1/alerts/${id}/decisions`, {
     method: "POST",
