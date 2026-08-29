@@ -61,37 +61,24 @@ function DashboardPage() {
     );
   }, [dashboard, handled, persona]);
 
+  function handleDismiss(alertId, e) {
+    if (e) e.stopPropagation();
+    setHandled((current) => ({ ...current, [alertId]: "dismissed" }));
+    if (selected?.alert?.id === alertId) {
+      setSelected(null);
+    }
+  }
+
   async function openAlert(item) {
     setSelected(item);
-    setNarrative(null);
     setError("");
-    if (item.route !== "ABSTAIN") {
-      try {
-        setNarrative(await getNarrative(item.alert.id, persona));
-      } catch (err) {
-        setError(err.message);
-      }
-    }
   }
 
-  async function handleInvestigate() {
+  function startDiagnosis() {
     if (!selected) return;
-    navigate(`/investigate/${selected.alert.id}?persona=${encodeURIComponent(persona)}`);
+    const alertId = selected.alert.id;
     setSelected(null);
-  }
-
-  async function decide(decision) {
-    if (!selected) return;
-    setBusy(true);
-    try {
-      await saveDecision(selected.alert.id, { decision, persona, feedback: "" });
-      setHandled((current) => ({ ...current, [selected.alert.id]: decision }));
-      setSelected(null);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setBusy(false);
-    }
+    navigate(`/investigate/${alertId}?persona=${encodeURIComponent(persona)}`);
   }
 
   const impact = visibleAlerts.reduce((sum, item) => sum + Math.abs(item.alert.delta_inr), 0);
@@ -126,7 +113,7 @@ function DashboardPage() {
             <p className="eyebrow">{PERSONAS[persona].scope}</p>
             <h1>Find the reason behind the signal.</h1>
             <p className="lede">
-              A decision workspace for retail anomalies, grounded in operational
+              An enterprise decision workspace for retail anomalies, grounded in operational
               evidence and explicit uncertainty.
             </p>
           </div>
@@ -181,20 +168,23 @@ function DashboardPage() {
             </div>
           ) : (
             visibleAlerts.map((item) => (
-              <AlertCard key={item.alert.id} item={item} onOpen={() => openAlert(item)} />
+              <AlertCard
+                key={item.alert.id}
+                item={item}
+                onOpen={() => openAlert(item)}
+                onRemove={(e) => handleDismiss(item.alert.id, e)}
+              />
             ))
           )}
         </section>
       </main>
 
       {selected && (
-        <Drawer
+        <InvestigateModal
           item={selected}
-          narrative={narrative}
           onClose={() => setSelected(null)}
-          onInvestigate={handleInvestigate}
-          onDecision={decide}
-          busy={busy}
+          onDiagnose={startDiagnosis}
+          onRemove={() => handleDismiss(selected.alert.id)}
         />
       )}
     </div>
@@ -211,7 +201,7 @@ function Metric({ label, value, caption, accent }) {
   );
 }
 
-function AlertCard({ item, onOpen }) {
+function AlertCard({ item, onOpen, onRemove }) {
   const { alert } = item;
   const change = alert.pct_change == null ? "New signal" : `${alert.pct_change >= 0 ? "+" : ""}${(alert.pct_change * 100).toFixed(1)}%`;
 
@@ -221,138 +211,108 @@ function AlertCard({ item, onOpen }) {
         <span className={`route ${item.route.toLowerCase()}`}>
           {routeLabel(item.route)}
         </span>
-        <span className="alert-id">{alert.id}</span>
+        <span className="severity-tag" style={{ fontSize: '0.75rem', fontWeight: 600, color: '#e53e3e', background: '#fff5f5', padding: '2px 8px', borderRadius: '4px' }}>
+          HIGH
+        </span>
       </div>
       <h3>{alert.kpi}</h3>
       <p className="context">
-        {alert.category} <span>/</span> {alert.region}
+        {alert.category} <span>/</span> {alert.region} · Week {alert.week_start}
       </p>
       <div className="card-stats">
         <div>
-          <small>Vs baseline</small>
+          <small>Current / Baseline</small>
+          <strong>{alert.current_fmt || `₹${(alert.current||0).toLocaleString("en-IN")}`} / {alert.baseline_fmt || `₹${(alert.baseline_mean||0).toLocaleString("en-IN")}`}</strong>
+        </div>
+        <div>
+          <small>Movement</small>
           <strong className={alert.delta_inr < 0 ? "negative" : "positive"}>
             {change}
           </strong>
         </div>
         <div className="impact">
-          <small>Impact</small>
+          <small>Business Impact</small>
           <strong>{alert.delta_fmt}</strong>
         </div>
       </div>
-      <button className="investigate" onClick={onOpen}>
-        Investigate <ArrowUpRight size={16} />
-      </button>
+      <div className="card-actions" style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+        <button className="secondary-button" style={{ flex: 1, padding: '8px', borderRadius: '6px', fontSize: '0.85rem' }} onClick={onRemove}>
+          Remove
+        </button>
+        <button className="investigate" style={{ flex: 2 }} onClick={onOpen}>
+          Investigate <ArrowUpRight size={16} />
+        </button>
+      </div>
     </article>
   );
 }
 
-function Drawer({
-  item,
-  narrative,
-  onClose,
-  onInvestigate,
-  onDecision,
-  busy,
-}) {
+import KPIChart from "./components/KPIChart.jsx";
+
+function InvestigateModal({ item, onClose, onDiagnose, onRemove }) {
   const { alert } = item;
-  const winner = item.hypotheses?.find((hypothesis) => hypothesis.supported);
 
   return (
     <div
       className="overlay"
-      onMouseDown={(event) =>
-        event.target === event.currentTarget && onClose()
-      }
+      style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 1000 }}
+      onMouseDown={(e) => e.target === e.currentTarget && onClose()}
     >
-      <aside className="drawer">
-        <div className="drawer-head">
+      <div className="investigate-modal" style={{ background: '#fff', borderRadius: '12px', width: '90%', maxWidth: '680px', padding: '24px', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)', maxHeight: '90vh', overflowY: 'auto' }}>
+        <div className="modal-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #eee', paddingBottom: '12px', marginBottom: '16px' }}>
           <div>
-            <span className={`route ${item.route.toLowerCase()}`}>
-              {routeLabel(item.route)}
-            </span>
-            <p className="eyebrow">{alert.id} / diagnostic brief</p>
-            <h2>{alert.kpi}</h2>
-            <p className="context">
-              {alert.category} <span>/</span> {alert.region} · {alert.delta_fmt}
+            <span style={{ fontSize: '0.8rem', color: '#718096', fontWeight: 600 }}>ALERT SNAPSHOT · {alert.id}</span>
+            <h2 style={{ margin: '4px 0 0 0', fontSize: '1.4rem' }}>{alert.kpi}</h2>
+            <p style={{ margin: '2px 0 0 0', color: '#4a5568', fontSize: '0.9rem' }}>
+              {alert.category} · {alert.region} · Week {alert.week_start}
             </p>
           </div>
-          <button className="icon-button" onClick={onClose} title="Close">
-            <X size={19} />
+          <button className="icon-button" onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
+            <X size={20} />
           </button>
         </div>
 
-        {item.route === "ABSTAIN" ? (
-          <div className="notice warning">
-            <CircleAlert size={19} />
-            <div>
-              <strong>Diagnostic abstention</strong>
-              <p>{item.abstention?.reason}</p>
-              <small>{item.abstention?.required_data}</small>
-            </div>
+        <div className="modal-stats-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', background: '#f7fafc', padding: '12px', borderRadius: '8px', marginBottom: '16px' }}>
+          <div>
+            <small style={{ color: '#718096', fontSize: '0.75rem', display: 'block' }}>Current / Baseline</small>
+            <strong style={{ fontSize: '0.95rem' }}>{alert.current_fmt || `₹${(alert.current||0).toLocaleString("en-IN")}`} / {alert.baseline_fmt || `₹${(alert.baseline_mean||0).toLocaleString("en-IN")}`}</strong>
           </div>
-        ) : (
-          <>
-            <div className="section-label">Evidence-led finding</div>
-            <div className="finding">
-              <div className="confidence">
-                <span>Confidence</span>
-                <strong>
-                  {winner?.confidence_pct ||
-                    Math.round((item.confidence?.score || 0) * 100)}
-                  %
-                </strong>
-              </div>
-              <h3>{winner?.name || item.recommendation?.driver}</h3>
-              <p>{winner?.verdict || item.recommendation?.basis}</p>
-            </div>
-            <div className="evidence-grid">
-              <Evidence label="Route" value={routeLabel(item.route)} />
-              <Evidence
-                label="Evidence records"
-                value={`${item.rag_evidence?.length || 0} retrieved`}
-              />
-              <Evidence
-                label="Recommendation"
-                value={item.recommendation?.owner || "Review required"}
-              />
-            </div>
-            <div className="section-label">Audited narrative</div>
-            <div className="narrative">
-              {narrative ? (
-                <>
-                  <p>{narrative.text}</p>
-                  <small>
-                    {narrative.engine} · {narrative.audit}
-                  </small>
-                </>
-              ) : (
-                <p>Generating the verified brief...</p>
-              )}
-            </div>
-            <div className="section-label">Recommended action</div>
-            <div className="action">
-              <strong>{item.recommendation?.action}</strong>
-              <p>{item.recommendation?.monitoring_plan}</p>
-            </div>
-            <div className="drawer-actions">
-              <button
-                className="secondary"
-                disabled={busy}
-                onClick={() => onDecision("rejected")}
-              >
-                Reject
-              </button>
-              <button
-                className="primary"
-                disabled={busy}
-                onClick={onInvestigate}
-              >
-                Investigate <ChevronRight size={16} />
-              </button>
-            </div>
-          </>
-        )}
-      </aside>
+          <div>
+            <small style={{ color: '#718096', fontSize: '0.75rem', display: 'block' }}>Movement %</small>
+            <strong className={alert.delta_inr < 0 ? "negative" : "positive"} style={{ fontSize: '0.95rem' }}>
+              {alert.pct_fmt || `${((alert.pct_change||0)*100).toFixed(1)}%`}
+            </strong>
+          </div>
+          <div>
+            <small style={{ color: '#718096', fontSize: '0.75rem', display: 'block' }}>Business Impact</small>
+            <strong className={alert.delta_inr < 0 ? "negative" : "positive"} style={{ fontSize: '0.95rem' }}>
+              {alert.delta_fmt}
+            </strong>
+          </div>
+        </div>
+
+        <div className="modal-chart-box" style={{ marginBottom: '20px' }}>
+          <h4 style={{ margin: '0 0 8px 0', fontSize: '0.9rem', color: '#4a5568' }}>Real Telemetry Historical Trend</h4>
+          <KPIChart alert={alert} />
+        </div>
+
+        <div className="modal-actions" style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', borderTop: '1px solid #eee', paddingTop: '16px' }}>
+          <button
+            className="secondary-button"
+            onClick={onRemove}
+            style={{ padding: '10px 20px', borderRadius: '6px', cursor: 'pointer', border: '1px solid #cbd5e0', background: '#fff' }}
+          >
+            Remove
+          </button>
+          <button
+            className="primary-button"
+            onClick={onDiagnose}
+            style={{ padding: '10px 28px', borderRadius: '6px', cursor: 'pointer', background: '#3182ce', color: '#fff', fontWeight: 'bold', border: 'none' }}
+          >
+            Diagnose
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

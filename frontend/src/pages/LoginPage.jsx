@@ -52,13 +52,13 @@ export default function LoginPage() {
       <main className="login-main">
         <div className="login-container">
           <div className="login-header">
-            <h1>Welcome to CAUSE</h1>
-            <p className="login-subtitle">Causal Intelligence for Retail Anomalies</p>
+            <h1>Who are you?</h1>
+            <p className="login-subtitle">Select your persona to access tailored causal insights and authorization rules</p>
           </div>
 
           <div className="login-content">
             <div className="login-section">
-              <h2>Select Your Role</h2>
+              <h2>Select Your Persona</h2>
               <p className="login-description">Choose your perspective to access tailored insights</p>
 
               <div className="personas-grid">

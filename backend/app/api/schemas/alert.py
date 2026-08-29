@@ -38,3 +38,4 @@ class InvestigationResponse(BaseModel):
     rag_evidence: list[dict[str, Any]] = []
     persona: str
     narrative: dict[str, Any] | None = None
+    ledger_rows: list[dict[str, Any]] = []

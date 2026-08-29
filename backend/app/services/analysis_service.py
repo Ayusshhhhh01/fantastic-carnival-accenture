@@ -75,5 +75,6 @@ class AnalysisService:
             "abstention": result.get("abstention"),
             "rag_evidence": result.get("rag_evidence", []),
             "persona": persona,
-            "narrative": narrative
+            "narrative": narrative,
+            "ledger_rows": self.dashboard().get("ledger_rows", [])
         }
