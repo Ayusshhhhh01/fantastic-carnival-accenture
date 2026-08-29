@@ -9,6 +9,15 @@ class NarrativeService:
 
     def create(self, alert_id: str, persona: str) -> dict:
         result = self.analysis.get_alert(alert_id)
+        if result.get("route") == "ABSTAIN":
+            return {
+                "alert_id": alert_id,
+                "persona": persona,
+                "text": "Insufficient evidence — CAUSE abstained from generating a definitive explanation.",
+                "engine": "NONE (Abstained)",
+                "removed_claims": [],
+                "audit": "Abstained (No LLM call)"
+            }
         payload = redact_for_cxo(dict(result)) if persona == "CXO" else dict(result)
         text, engine = narrate(payload, persona)
         clean, removed, audit = self_verify(text, payload)

@@ -82,8 +82,10 @@ def _offline_narrate(payload: dict, persona: str) -> str:
                 f"[{fp['event_type']}] on {fp['event_date']} ({fp['description']}). "
                 f"Confidence 95%. Action: {rec['action']}")
 
-    winner = next((h for h in payload["hypotheses"] if h["supported"]),
-                  payload["hypotheses"][0])
+    hyps = payload.get("hypotheses", [])
+    if not hyps and "winning_hypothesis" in payload:
+        hyps = [payload["winning_hypothesis"]]
+    winner = next((h for h in hyps if h.get("supported")), hyps[0] if hyps else {"name": "Unknown", "supported": False, "deciding_value": "N/A"})
     d = winner.get("detail", {})
 
     lines = []
@@ -105,7 +107,8 @@ def _offline_narrate(payload: dict, persona: str) -> str:
     elif winner["name"].startswith("Operational") and d:
         lines.append(f"Root cause: operational disruption — [{d.get('event_type')}] on {d.get('event_date')}: {d.get('description')}.")
     else:
-        lines.append(f"Root cause: {winner['name']} — {winner['deciding_value'].split(';')[0]}.")
+        dec_val = winner.get('deciding_value', 'evidence confirmed')
+        lines.append(f"Root cause: {winner['name']} — {str(dec_val).split(';')[0]}.")
     
     if payload["route"] == "UNRESOLVED_CONFLICT":
         lines.append("Contradiction: comparable region showed opposite trajectory — manual audit required.")
@@ -119,6 +122,8 @@ def _offline_narrate(payload: dict, persona: str) -> str:
 # ------------------------------------------------------------- Step 8 -----
 def narrate(payload: dict, persona: str, ledger_add=None):
     """Returns (text, engine_label)."""
+    if payload.get("route") == "ABSTAIN" or payload.get("abstention", {}).get("abstain_flag"):
+        return ("Insufficient evidence — CAUSE abstained from generating a definitive explanation.", "NONE (Abstained)")
     if llm_available():
         try:
             sys_p = NARRATE_SYSTEM + " " + _persona_instructions(persona)
@@ -182,6 +187,8 @@ def _allowed_numbers(payload: dict):
 
 def self_verify(text: str, payload: dict, ledger_add=None):
     """Return (clean_text, removed_claims list)."""
+    if payload.get("route") == "ABSTAIN" or payload.get("abstention", {}).get("abstain_flag"):
+        return text, [], "NONE (Abstained - LLM bypassed)"
     removed = []
     engine = ""
     if llm_available():

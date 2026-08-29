@@ -181,6 +181,14 @@ def detect(sales_wk, camp_wk):
         size_ok = pct is None or abs(pct) >= PCT_THRESHOLD
         if not (stat_ok and size_ok):
             continue
+        series = [
+            {
+                "week": str(row.week_start.date()),
+                "value": float(row.revenue),
+                "expected": base
+            }
+            for _, row in s.tail(8).iterrows()
+        ]
         alerts.append({
             "kpi": "Revenue",
             "category": r.category, "region": r.region,
@@ -190,6 +198,7 @@ def detect(sales_wk, camp_wk):
             "delta_inr": delta, "pct_change": pct, "z_score": z,
             "direction": "down" if delta < 0 else "up",
             "low_data": low_data,
+            "historical_series": series,
         })
 
     # --- KPI 2: Marketing spend by category ---
@@ -209,6 +218,14 @@ def detect(sales_wk, camp_wk):
         z = (cur - base) / std if std else None
         if z is not None and abs(z) >= Z_THRESHOLD and pct is not None \
                 and abs(pct) >= PCT_THRESHOLD:
+            series = [
+                {
+                    "week": str(row.week_start.date()),
+                    "value": float(row.spend),
+                    "expected": base
+                }
+                for _, row in s.tail(8).iterrows()
+            ]
             alerts.append({
                 "kpi": "Marketing Spend", "category": cat, "region": "(all)",
                 "week_start": cur_week,
@@ -217,6 +234,7 @@ def detect(sales_wk, camp_wk):
                 "delta_inr": delta, "pct_change": pct, "z_score": z,
                 "direction": "down" if delta < 0 else "up",
                 "low_data": False,
+                "historical_series": series,
             })
 
     # sort by absolute rupee impact, not %
@@ -421,6 +439,8 @@ def hypothesis_supply(alert, sales_wk_daily, sales, inv, rag_citations=None):
             "deciding_value": ("0 stock-out day(s) for any product in this "
                                f"{cat}/{reg} cell during the alert week"),
             "data_source": "inventory_daily.csv (stock_out_flag)",
+            "supporting_evidence": "Inventory daily tracking active",
+            "contrary_evidence": "0 stock-out day(s) for any product in this cell during alert week",
             "verdict": ("REJECTED - no stock-out exposure exists in this "
                         "cell during the window"),
             "score": 0.0,
@@ -445,6 +465,9 @@ def hypothesis_supply(alert, sales_wk_daily, sales, inv, rag_citations=None):
     explain_ratio = gap / total_move if total_move else 0.0
     supported = explain_ratio >= SUPPLY_EXPLAIN_MIN
 
+    sup_ev = f"Pre-stockout daily avg {fmt_inr(pre_rate)} x {len(days)} stockout days = {fmt_inr(counterfactual)} expected vs {fmt_inr(actual)} actual ({explain_ratio*100:.0f}% of move explained)" if supported else f"Stockout recorded for {pid} ({len(days)} days)"
+    con_ev = "None identified" if supported else f"Counterfactual gap explains only {explain_ratio*100:.0f}% of move (threshold >= {SUPPLY_EXPLAIN_MIN*100:.0f}%)"
+
     return {
         "name": "Supply-side (stock-out)",
         "supported": bool(supported),
@@ -457,6 +480,8 @@ def hypothesis_supply(alert, sales_wk_daily, sales, inv, rag_citations=None):
             f"{fmt_inr(total_move)} KPI move"),
         "data_source": f"inventory_daily.csv (flag=1 {w0.date()}..{w1.date()})"
                        f" + sales_daily.csv ({pid})",
+        "supporting_evidence": sup_ev,
+        "contrary_evidence": con_ev,
         "verdict": ("SUPPORTED" if supported else
                     f"REJECTED - counterfactual gap accounts for "
                     f"{explain_ratio*100:.0f}% of the move, and the move's "
@@ -514,6 +539,8 @@ def hypothesis_demand(alert, camps_wk_cell, rag_citations=None):
         "deciding_value": (f"{fmt_inr(cur_spend)} this week vs "
                            f"{fmt_inr(base_spend)} baseline -> {rv}"),
         "data_source": "campaigns_weekly.csv (same category x region)",
+        "supporting_evidence": f"Campaign spend changed {rv} vs baseline {fmt_inr(base_spend)}" if supported else "Campaign spend tracking active",
+        "contrary_evidence": "None identified" if supported else f"Spend change {rv} is insufficient or misaligned with {alert['direction']} KPI move",
         "verdict": verdict,
         "score": round(min(abs(ratio) / 0.5, 1.0) if ratio is not None else 0.0, 3),
         "detail": {
@@ -536,7 +563,10 @@ def hypothesis_pricing(alert, sales, rag_citations=None):
         return {"name": "Pricing change", "supported": False,
                 "deciding_metric": "unit_price delta",
                 "deciding_value": "insufficient rows",
-                "data_source": "sales_daily.csv", "verdict": "REJECTED",
+                "data_source": "sales_daily.csv",
+                "supporting_evidence": "POS price tracking active",
+                "contrary_evidence": "Insufficient transaction rows in window",
+                "verdict": "REJECTED",
                 "score": 0.0, "detail": {}, "rag_citations": []}
     max_delta = 0.0
     worst_pid = None
@@ -557,6 +587,8 @@ def hypothesis_pricing(alert, sales, rag_citations=None):
         "deciding_metric": "max unit_price change in window",
         "deciding_value": dv,
         "data_source": "sales_daily.csv unit_price column",
+        "supporting_evidence": f"Unit price shift of {max_delta*100:.2f}% detected" if supported else "Unit price line item tracking active",
+        "contrary_evidence": "None identified" if supported else f"Largest price move was only {max_delta*100:.2f}% (below {PRICE_MOVE_MIN*100:.0f}% threshold)",
         "verdict": ("SUPPORTED" if supported else
                     f"REJECTED - largest price move was only "
                     f"{max_delta*100:.2f}%"),
@@ -589,6 +621,8 @@ def hypothesis_operational(alert, changelog, sales, rag_citations=None):
             "deciding_metric": "logged operational/platform incident in window",
             "deciding_value": f"0 logged platform/checkout incidents for {cat}/{reg} in window",
             "data_source": "change_log.csv (event_type=it_incident / operational)",
+            "supporting_evidence": "Change log event scanner active",
+            "contrary_evidence": f"0 logged platform/checkout incidents for {cat}/{reg} in window",
             "verdict": "REJECTED - no IT outages or channel disruptions logged",
             "score": 0.0,
             "detail": {},
@@ -608,6 +642,8 @@ def hypothesis_operational(alert, changelog, sales, rag_citations=None):
         "deciding_metric": "incident severity & category match",
         "deciding_value": f"[{h['event_type']}] logged on {h['date'].date()}: {h['description']}",
         "data_source": "change_log.csv (event_type=it_incident / operational)",
+        "supporting_evidence": f"Change log entry: [{h['event_type']}] on {h['date'].date()}" if is_supported else "Operational log checked",
+        "contrary_evidence": "None identified" if is_supported else f"Event type [{h['event_type']}] misaligned with KPI direction ({alert['direction']})",
         "verdict": verdict,
         "score": 0.95 if is_supported else 0.20,
         "detail": {
@@ -727,6 +763,7 @@ def score_confidence(alert, hyps, winner):
         gaps.append(f"composite confidence {score:.2f} below Low tier "
                     f"cutoff {CONF_LOW:.2f}")
     return {"score": round(score, 3), "tier": tier,
+            "name": "Weighted Evidence Confidence",
             "components": components, "gaps": gaps}
 
 

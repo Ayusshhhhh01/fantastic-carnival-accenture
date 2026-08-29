@@ -1,4 +1,9 @@
-"""Generate the deterministic demo telemetry used by CAUSE."""
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from cause.data_gen import build_campaigns, build_change_log, build_inventory, build_sales
 

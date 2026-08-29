@@ -25,34 +25,41 @@ class AnalysisService:
 
     def investigate_alert(self, alert_id: str, persona: str) -> dict[str, Any]:
         """Investigate alert and determine path type (FAST/SLOW/ABSTAIN)."""
-        result = self.get_alert(alert_id)
+        raw_result = self.get_alert(alert_id)
+        result = redact_for_cxo(dict(raw_result)) if persona == "CXO" else dict(raw_result)
         route = result.get("route", "ABSTAIN")
         
-        # Determine path type based on route
+        # Determine path type based on route (Requirements 1 & 2)
         if route == "ABSTAIN":
             path_type = "ABSTAIN"
             path_success = False
-        elif route in ["RESOLVED", "FAST_PATH"]:
+            narrative = None  # ZERO LLM calls on ABSTAIN
+        elif route == "FAST_PATH":
             path_type = "FAST"
             path_success = True
-        else:  # UNRESOLVED_CONFLICT
+            text, engine = narrate(result, persona)
+            clean, removed, audit = self_verify(text, result)
+            narrative = {
+                "text": " ".join(clean.split()).strip(),
+                "engine": engine,
+                "removed_claims": removed,
+                "audit": audit
+            }
+        else:  # RESOLVED or UNRESOLVED_CONFLICT (both are Path 2: SLOW)
             path_type = "SLOW"
-            path_success = False
+            path_success = (route == "RESOLVED")
+            text, engine = narrate(result, persona)
+            clean, removed, audit = self_verify(text, result)
+            narrative = {
+                "text": " ".join(clean.split()).strip(),
+                "engine": engine,
+                "removed_claims": removed,
+                "audit": audit
+            }
         
-        # Generate narrative for investigation
-        payload = redact_for_cxo(dict(result)) if persona == "CXO" else dict(result)
-        text, engine = narrate(payload, persona)
-        clean, removed, audit = self_verify(text, payload)
-        narrative = {
-            "text": " ".join(clean.split()).strip(),
-            "engine": engine,
-            "removed_claims": removed,
-            "audit": audit
-        }
-        
-        # Sort hypotheses by confidence for slow path
+        # Sort hypotheses by confidence/score (ranking exactly 4 hypotheses)
         hypotheses = result.get("hypotheses", [])
-        hypotheses_sorted = sorted(hypotheses, key=lambda h: h.get("confidence_pct", 0) or h.get("score", 0), reverse=True)
+        hypotheses_sorted = sorted(hypotheses, key=lambda h: (h.get("confidence_pct", 0) or h.get("score", 0)), reverse=True)
         
         return {
             "alert_id": alert_id,
