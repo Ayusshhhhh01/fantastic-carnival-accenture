@@ -7,8 +7,8 @@ import InvestigationDetailPage from "./pages/InvestigationDetailPage.jsx";
 import KPIChart from "./components/KPIChart.jsx";
 
 const PERSONAS = {
-  "Category Manager": { label: "Category Manager", scope: "Electronics + Apparel & Home", categories: ["Electronics", "Apparel", "Home & Kitchen"] },
-  CXO: { label: "CXO Suite", scope: "Enterprise portfolio", categories: null },
+  "Category Manager": { label: "Category Manager", scope: "Category Operational Portfolio", categories: null },
+  CXO: { label: "CXO Suite", scope: "Enterprise Portfolio", categories: null },
 };
 
 function formatImpact(value) {
