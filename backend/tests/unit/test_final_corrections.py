@@ -140,11 +140,13 @@ def test_persona_kpi_portfolios_are_distinct():
     cxo_kpis = {a["alert"]["kpi"] for a in cxo_dash.get("alerts", [])}
 
     # Verify Category Manager KPI portfolio contains operational/commercial KPIs
-    expected_cm_kpis = {"Units Sold", "Stockout Incident Days", "Average Realized Price", "Revenue", "Marketing Spend"}
+    expected_cm_kpis = {"Units Sold", "Stockout Incident Days", "Average Realized Price", "Category Revenue", "Campaign Promotional Effectiveness"}
     assert cm_kpis.issubset(expected_cm_kpis), f"Category Manager alerts contain unexpected KPIs: {cm_kpis - expected_cm_kpis}"
+    assert "Revenue" not in cm_kpis, "Category Manager dashboard must not contain generic 'Revenue'!"
+    assert "Marketing Spend" not in cm_kpis, "Category Manager dashboard must not contain generic 'Marketing Spend'!"
 
     # Verify CXO KPI portfolio contains executive/financial KPIs
-    expected_cxo_kpis = {"Enterprise Portfolio Revenue", "Marketing ROI Efficiency", "Price Realization Pressure", "Enterprise Inventory Exposure Risk", "Portfolio Strategic Risk"}
+    expected_cxo_kpis = {"Enterprise Revenue", "Marketing Efficiency", "Price Pressure", "Inventory Risk", "Portfolio Performance", "Portfolio Strategic Risk"}
     assert cxo_kpis.issubset(expected_cxo_kpis), f"CXO alerts contain unexpected KPIs: {cxo_kpis - expected_cxo_kpis}"
 
     # Verify KPI portfolios do not overlap
