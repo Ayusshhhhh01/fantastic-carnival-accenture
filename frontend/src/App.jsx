@@ -111,8 +111,120 @@ function DashboardPage() {
     navigate(`/investigate/${alertId}?persona=${encodeURIComponent(persona)}`);
   }
 
-  const impact = visibleAlerts.reduce((sum, item) => sum + Math.abs(item.alert.delta_inr), 0);
+  const [selectedKpi, setSelectedKpi] = useState("ALL");
+
+  useEffect(() => {
+    setSelectedKpi("ALL");
+  }, [persona]);
+
+  const impact = visibleAlerts.reduce((sum, item) => sum + Math.abs(item.alert.delta_inr || 0), 0);
   const verified = visibleAlerts.filter((item) => ["RESOLVED", "FAST_PATH"].includes(item.route)).length;
+
+  const kpiStats = useMemo(() => {
+    const autoDiagRate = `${visibleAlerts.length ? Math.round((verified / visibleAlerts.length) * 100) : 100}%`;
+
+    if (persona === "CXO") {
+      const entRevAlerts = visibleAlerts.filter((a) => a.alert.kpi === "Enterprise Revenue");
+      const mktEffAlerts = visibleAlerts.filter((a) => a.alert.kpi === "Marketing Efficiency");
+      const invRiskAlerts = visibleAlerts.filter((a) => a.alert.kpi === "Inventory Risk");
+      const portPerfAlerts = visibleAlerts.filter((a) => a.alert.kpi === "Portfolio Performance");
+
+      const invRiskImpact = invRiskAlerts.reduce((sum, item) => sum + Math.abs(item.alert.delta_inr || 0), 0);
+      const mktRatio = mktEffAlerts.length ? `${mktEffAlerts[0]?.alert?.current?.toFixed(2)}x` : "1.00x";
+
+      const cards = [
+        {
+          label: "Enterprise Exposure",
+          value: formatImpact(impact),
+          caption: "Absolute portfolio revenue impact",
+          accent: true,
+        },
+        {
+          label: "Marketing Efficiency",
+          value: mktRatio,
+          caption: `${mktEffAlerts.length} marketing capital shift${mktEffAlerts.length === 1 ? "" : "s"}`,
+        },
+        {
+          label: "Inventory Supply Risk",
+          value: formatImpact(invRiskImpact),
+          caption: `${invRiskAlerts.length} supply chain risk alert${invRiskAlerts.length === 1 ? "" : "s"}`,
+        },
+        {
+          label: "Strategic Portfolio Risk",
+          value: `${portPerfAlerts.length + entRevAlerts.length} Active`,
+          caption: "Cross-channel & top-line deviations",
+        },
+        {
+          label: "Auto-Diagnostic Rate",
+          value: autoDiagRate,
+          caption: `${verified} signals verified by engine`,
+        },
+      ];
+
+      const filterOptions = [
+        { id: "ALL", label: "All Strategic KPIs", count: visibleAlerts.length },
+        { id: "Enterprise Revenue", label: "Enterprise Revenue", count: entRevAlerts.length },
+        { id: "Inventory Risk", label: "Inventory Risk", count: invRiskAlerts.length },
+        { id: "Marketing Efficiency", label: "Marketing Efficiency", count: mktEffAlerts.length },
+        { id: "Portfolio Performance", label: "Portfolio Performance", count: portPerfAlerts.length },
+      ].filter((opt) => opt.id === "ALL" || opt.count > 0);
+
+      return { cards, filterOptions };
+    } else {
+      const catRevAlerts = visibleAlerts.filter((a) => a.alert.kpi === "Category Revenue");
+      const unitsAlerts = visibleAlerts.filter((a) => a.alert.kpi === "Units Sold");
+      const stockoutAlerts = visibleAlerts.filter((a) => a.alert.kpi === "Stockout Incident Days");
+      const campAlerts = visibleAlerts.filter((a) => a.alert.kpi === "Campaign Promotional Effectiveness");
+
+      const unitsDelta = unitsAlerts.reduce((sum, item) => sum + (item.alert.current - item.alert.baseline_mean), 0);
+      const totalStockoutDays = stockoutAlerts.reduce((sum, item) => sum + (item.alert.current || 0), 0);
+      const campSpendImpact = campAlerts.reduce((sum, item) => sum + Math.abs(item.alert.delta_inr || 0), 0);
+
+      const cards = [
+        {
+          label: "Revenue Exposure",
+          value: formatImpact(impact),
+          caption: "Absolute commercial impact",
+          accent: true,
+        },
+        {
+          label: "Volume Velocity (Units)",
+          value: unitsAlerts.length ? `${unitsDelta > 0 ? "+" : ""}${Math.round(unitsDelta).toLocaleString()} u` : "Stable",
+          caption: `${unitsAlerts.length} volume velocity alert${unitsAlerts.length === 1 ? "" : "s"}`,
+        },
+        {
+          label: "Stockout Incident Days",
+          value: `${totalStockoutDays} days`,
+          caption: `${stockoutAlerts.length} operational stockout alert${stockoutAlerts.length === 1 ? "" : "s"}`,
+        },
+        {
+          label: "Promotional Effectiveness",
+          value: formatImpact(campSpendImpact),
+          caption: `${campAlerts.length} campaign spend shift${campAlerts.length === 1 ? "" : "s"}`,
+        },
+        {
+          label: "Auto-Diagnostic Rate",
+          value: autoDiagRate,
+          caption: `${verified} signals verified by engine`,
+        },
+      ];
+
+      const filterOptions = [
+        { id: "ALL", label: "All Category KPIs", count: visibleAlerts.length },
+        { id: "Category Revenue", label: "Category Revenue", count: catRevAlerts.length },
+        { id: "Stockout Incident Days", label: "Stockout Incident Days", count: stockoutAlerts.length },
+        { id: "Units Sold", label: "Units Sold", count: unitsAlerts.length },
+        { id: "Campaign Promotional Effectiveness", label: "Campaign Effectiveness", count: campAlerts.length },
+      ].filter((opt) => opt.id === "ALL" || opt.count > 0);
+
+      return { cards, filterOptions };
+    }
+  }, [persona, visibleAlerts, impact, verified]);
+
+  const filteredAlerts = useMemo(() => {
+    if (selectedKpi === "ALL") return visibleAlerts;
+    return visibleAlerts.filter((item) => item.alert.kpi === selectedKpi);
+  }, [visibleAlerts, selectedKpi]);
 
   return (
     <div className="shell">
@@ -178,29 +290,22 @@ function DashboardPage() {
         )}
 
         <section className="metrics">
-          <Metric
-            label="Active signals"
-            value={visibleAlerts.length}
-            caption="In your current scope"
-          />
-          <Metric
-            label="Exposure"
-            value={formatImpact(impact)}
-            caption="Absolute revenue impact"
-            accent
-          />
-          <Metric
-            label="Auto-diagnostic rate"
-            value={`${visibleAlerts.length ? Math.round((verified / visibleAlerts.length) * 100) : 100}%`}
-            caption={`${verified} signals verified`}
-          />
+          {kpiStats.cards.map((c, i) => (
+            <Metric
+              key={i}
+              label={c.label}
+              value={c.value}
+              caption={c.caption}
+              accent={c.accent}
+            />
+          ))}
         </section>
 
         <section className="queue-head">
           <div>
             <p className="eyebrow">Prioritized queue ({persona} Lens)</p>
             <h2>
-              Telemetry anomalies <span>{visibleAlerts.length}</span>
+              Telemetry anomalies <span>{filteredAlerts.length}</span>
             </h2>
           </div>
           <span className="queue-note">
@@ -208,24 +313,40 @@ function DashboardPage() {
           </span>
         </section>
 
+        {kpiStats.filterOptions.length > 1 && (
+          <div className="kpi-filter-bar">
+            {kpiStats.filterOptions.map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                className={`kpi-filter-btn ${selectedKpi === opt.id ? "active" : ""}`}
+                onClick={() => setSelectedKpi(opt.id)}
+              >
+                <span>{opt.label}</span>
+                <span className="kpi-filter-count">{opt.count}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
         <section className="queue">
           {busy && !dashboard ? (
             <div className="loading">Loading telemetry...</div>
           ) : error ? (
             null
-          ) : visibleAlerts.length === 0 ? (
+          ) : filteredAlerts.length === 0 ? (
             /* STATE 2: ALL ALERTS HAVE BEEN HANDLED STATE */
             <div className="empty-state-box">
               <Check size={32} color="#38a169" />
-              <h3>You're all caught up</h3>
-              <p>All active signals in your current scope have been reviewed and handled.</p>
-              <button className="secondary-button margin-top-sm" onClick={handleResetDemo}>
-                <RotateCcw size={15} /> Reset Demo Queue
+              <h3>{selectedKpi === "ALL" ? "You're all caught up" : `No active ${selectedKpi} signals`}</h3>
+              <p>{selectedKpi === "ALL" ? "All active signals in your current scope have been reviewed and handled." : "All signals for this KPI have been handled or none are currently triggered."}</p>
+              <button className="secondary-button margin-top-sm" onClick={selectedKpi === "ALL" ? handleResetDemo : () => setSelectedKpi("ALL")}>
+                <RotateCcw size={15} /> {selectedKpi === "ALL" ? "Reset Demo Queue" : "View All Active Signals"}
               </button>
             </div>
           ) : (
             /* STATE 1: ACTIVE ALERTS EXIST STATE */
-            visibleAlerts.map((item) => (
+            filteredAlerts.map((item) => (
               <AlertCard
                 key={item.alert.id}
                 item={item}
