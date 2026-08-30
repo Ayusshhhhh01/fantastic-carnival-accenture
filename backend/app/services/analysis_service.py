@@ -1,24 +1,37 @@
 from typing import Any
 
+from backend.app.config import get_settings
 from backend.app.causal.pipeline import CausalPipeline
 from backend.app.infrastructure.repositories.alert_repository import AlertRepository
+from backend.app.infrastructure.repositories.decision_repository import DecisionRepository
 from backend.app.infrastructure.llm.client import narrate, self_verify
 from cause.engine import redact_for_cxo
 
 
 class AnalysisService:
-    def __init__(self, pipeline: CausalPipeline | None = None):
+    def __init__(self, pipeline: CausalPipeline | None = None, decisions: DecisionRepository | None = None):
         self.pipeline = pipeline or CausalPipeline()
         self.alerts = AlertRepository()
+        self.decisions = decisions or DecisionRepository(get_settings().decisions_path)
         self._dashboard: dict[str, Any] | None = None
 
     def dashboard(self, refresh: bool = False) -> dict[str, Any]:
         if self._dashboard is None or refresh:
             self._dashboard = self.pipeline.execute()
+        
+        # Filter out handled/approved alert IDs from active dashboard list
+        handled_ids = self.decisions.get_handled_alert_ids()
+        if handled_ids and self._dashboard and "alerts" in self._dashboard:
+            filtered_alerts = [a for a in self._dashboard["alerts"] if str(a.get("alert", {}).get("id")) not in handled_ids]
+            res = dict(self._dashboard)
+            res["alerts"] = filtered_alerts
+            return res
+
         return self._dashboard
 
     def get_alert(self, alert_id: str) -> dict[str, Any]:
-        result = self.alerts.find(self.dashboard(), alert_id)
+        raw_dash = self.pipeline.execute()
+        result = self.alerts.find(raw_dash, alert_id)
         if result is None:
             raise KeyError(alert_id)
         return result
@@ -29,7 +42,6 @@ class AnalysisService:
         result = redact_for_cxo(dict(raw_result)) if persona == "CXO" else dict(raw_result)
         route = result.get("route", "ABSTAIN")
         
-        # Determine path type based on route (Requirements 1 & 2)
         if route == "ABSTAIN":
             path_type = "ABSTAIN"
             path_success = False
