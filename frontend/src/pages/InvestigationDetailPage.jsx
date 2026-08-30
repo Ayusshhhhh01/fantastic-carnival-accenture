@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   ChevronDown,
   ChevronUp,
+  ChevronRight,
   AlertCircle,
   CheckCircle2,
   ShieldAlert,
@@ -84,7 +85,8 @@ export default function InvestigationDetailPage() {
         setStage(STAGE.RCA_RESULTS);
       }
     } catch (err) {
-      setError(err.message || "Failed to load investigation data");
+      console.error(`[CAUSE Investigation Failure] Alert: ${alertId}, Persona: ${persona}, Error:`, err);
+      setError(err.message || "Unable to diagnose this signal.");
       setStage(STAGE.ERROR);
     }
   }
@@ -174,9 +176,11 @@ export default function InvestigationDetailPage() {
         </header>
         <main className="investigation-main">
           <div className="error-container">
-            <AlertCircle size={32} />
-            <h2>Investigation Failed</h2>
-            <p>{error || "Unable to retrieve investigation records."}</p>
+            <AlertCircle size={32} color="#e53e3e" />
+            <div className="error-text">
+              <strong>Unable to diagnose this signal</strong>
+              <p>{error || "Unable to retrieve investigation records."}</p>
+            </div>
             <button className="primary-button margin-top-md" onClick={loadInvestigation}>
               Retry Investigation
             </button>
@@ -186,7 +190,7 @@ export default function InvestigationDetailPage() {
     );
   }
 
-  const alert = investigation.alert;
+  const alert = investigation.alert || {};
   const topHypothesis = investigation.hypotheses?.find((h) => h.supported) || investigation.hypotheses?.[0];
 
   return (
@@ -409,7 +413,7 @@ export default function InvestigationDetailPage() {
                 </div>
 
                 <div className="hypotheses-list-container">
-                  {investigation.hypotheses.slice(0, 4).map((hyp, idx) => {
+                  {(investigation.hypotheses || []).slice(0, 4).map((hyp, idx) => {
                     const scorePct = hyp.confidence_pct || Math.round((hyp.score || 0) * 100);
 
                     return (
@@ -454,7 +458,7 @@ export default function InvestigationDetailPage() {
           )}
 
           {/* ------------------------------------------- STAGE 2E: ROOT CAUSE DETAIL SCREEN -- */}
-          {stage === STAGE.RCA_DETAIL && selectedCauseIndex !== null && (
+          {stage === STAGE.RCA_DETAIL && selectedCauseIndex !== null && investigation.hypotheses?.[selectedCauseIndex] && (
             <section className="investigation-section rca-detail-screen">
               <div className="detail-screen-nav margin-bottom-md">
                 <button className="secondary-button" onClick={() => setStage(STAGE.RCA_RESULTS)}>
