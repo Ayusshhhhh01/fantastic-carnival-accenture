@@ -33,10 +33,9 @@ export default function InvestigationDetailPage() {
   const navigate = useNavigate();
   const persona = new URLSearchParams(window.location.search).get("persona") || "Category Manager";
 
-  // Single Authoritative State Machine
+  // Single Authoritative State Machine (stage only, no redundant triageStep)
   const [stage, setStage] = useState(STAGE.TRIAGE);
   const [investigation, setInvestigation] = useState(null);
-  const [triageStep, setTriageStep] = useState(1);
   const [error, setError] = useState("");
   
   // User-selected detail states (Initial state for expanded cause is null - COLLAPSED by default)
@@ -49,7 +48,6 @@ export default function InvestigationDetailPage() {
   const [rejectReason, setRejectReason] = useState("");
   const [feedbackComment, setFeedbackComment] = useState("");
   const [deciding, setDeciding] = useState(false);
-  const [decisionSuccess, setDecisionSuccess] = useState(false);
 
   useEffect(() => {
     loadInvestigation();
@@ -57,12 +55,11 @@ export default function InvestigationDetailPage() {
 
   async function loadInvestigation() {
     setStage(STAGE.TRIAGE);
-    setTriageStep(1);
     setError("");
     setSelectedCauseIndex(null);
 
     try {
-      // Execute genuine backend investigation request
+      // Execute genuine backend investigation request synchronously
       const data = await investigateAlert(alertId, persona);
       setInvestigation(data);
 
@@ -70,14 +67,11 @@ export default function InvestigationDetailPage() {
       if (data.path_type === "FAST") {
         setStage(STAGE.FAST_RESULT);
       } else if (data.path_type === "ABSTAIN") {
-        setTriageStep(2);
         setStage(STAGE.ABSTAIN);
       } else if (data.route === "UNRESOLVED_CONFLICT") {
-        setTriageStep(2);
         setStage(STAGE.CONFLICT);
       } else {
         // Path 2: Deep Causal Research resolved
-        setTriageStep(2);
         setStage(STAGE.RCA_RESULTS);
       }
     } catch (err) {
@@ -98,13 +92,10 @@ export default function InvestigationDetailPage() {
         feedback: feedbackComment
       });
 
-      setDecisionSuccess(true);
       setDecisionType(type);
 
-      // Navigate back to Home dashboard after brief confirmation
-      setTimeout(() => {
-        navigate(`/dashboard?persona=${encodeURIComponent(persona)}`);
-      }, 1000);
+      // Immediately navigate back to Dashboard after successful backend persistence
+      navigate(`/dashboard?persona=${encodeURIComponent(persona)}`);
     } catch (err) {
       setError(err.message || "Failed to persist decision");
     } finally {
@@ -133,28 +124,7 @@ export default function InvestigationDetailPage() {
                 <Activity size={18} className="spin" color="#7800c4" />
                 <span>Checking Change Log for direct operational events...</span>
               </div>
-              {triageStep >= 2 && (
-                <div className="triage-subtext">✓ No direct match found — escalating to Deep Research</div>
-              )}
             </div>
-
-            {triageStep >= 2 && (
-              <div className="triage-step-item margin-top-md">
-                <div className="triage-path-label deep">PATH 2: Deep Causal Research</div>
-                <div className="triage-status-row">
-                  <Activity size={18} className="spin" color="#7800c4" />
-                  <span>Retrieving multi-source telemetry evidence...</span>
-                </div>
-                <div className="triage-status-row">
-                  <Activity size={18} className="spin" color="#7800c4" />
-                  <span>Testing 4 competing hypotheses (Supply, Demand, Pricing, Operational)...</span>
-                </div>
-                <div className="triage-status-row">
-                  <Activity size={18} className="spin" color="#7800c4" />
-                  <span>Calculating Weighted Evidence Confidence & Persona Rules...</span>
-                </div>
-              </div>
-            )}
           </div>
         </main>
       </div>
@@ -209,13 +179,6 @@ export default function InvestigationDetailPage() {
 
       <main className="investigation-main">
         <div className="investigation-container">
-
-          {decisionSuccess && (
-            <div className="decision-toast-banner">
-              <CheckCircle2 size={20} />
-              <span>Decision recorded successfully. Navigating to Dashboard...</span>
-            </div>
-          )}
 
           {error && (
             <div className="error margin-bottom-md">
@@ -395,7 +358,7 @@ export default function InvestigationDetailPage() {
                 <div className="section-title">
                   <div>
                     <h2>COMPETING CAUSES EVALUATED (4)</h2>
-                    <p className="section-subtitle">Deterministically evaluated & falsified operational hypotheses</p>
+                    <p className="section-subtitle">Four competing causes evaluated against available evidence.</p>
                   </div>
                   <div className="view-mode-actions">
                     <button className="primary-button" onClick={() => setStage(STAGE.OVERALL_RECOMMENDATION)}>
@@ -451,7 +414,7 @@ export default function InvestigationDetailPage() {
                                 setStage(STAGE.CAUSE_RECOMMENDATION);
                               }}
                             >
-                              View Cause Directive
+                              Recommendation
                             </button>
                           </div>
                         </div>
@@ -469,7 +432,7 @@ export default function InvestigationDetailPage() {
               {/* BACK BUTTON AT TOP ONLY */}
               <div className="detail-screen-nav margin-bottom-md">
                 <button className="secondary-button nav-back-top" onClick={() => setStage(STAGE.RCA_RESULTS)}>
-                  <ArrowLeft size={16} /> Back to All Causes
+                  <ArrowLeft size={16} /> Back to RCA List
                 </button>
                 <button className="primary-button" onClick={() => setStage(STAGE.OVERALL_RECOMMENDATION)}>
                   View Overall Recommendation <ArrowRight size={16} />
@@ -550,7 +513,7 @@ export default function InvestigationDetailPage() {
             <section className="investigation-section cause-recommendation-screen">
               <div className="detail-screen-nav margin-bottom-md">
                 <button className="secondary-button nav-back-top" onClick={() => setStage(STAGE.RCA_RESULTS)}>
-                  <ArrowLeft size={16} /> Back to All Causes
+                  <ArrowLeft size={16} /> Back to RCA List
                 </button>
               </div>
 
@@ -581,7 +544,7 @@ export default function InvestigationDetailPage() {
               {/* BACK BUTTON AT TOP ONLY */}
               <div className="detail-screen-nav margin-bottom-md">
                 <button className="secondary-button nav-back-top" onClick={() => setStage(STAGE.RCA_RESULTS)}>
-                  <ArrowLeft size={16} /> Back to All Causes
+                  <ArrowLeft size={16} /> Back to RCA List
                 </button>
               </div>
 
@@ -624,7 +587,7 @@ export default function InvestigationDetailPage() {
                 <div className="ai-summary-container margin-top-md">
                   <div className="ai-summary-head">
                     <span className="ai-summary-title">Governed LLM Executive Summary</span>
-                    <span className="ai-trust-pill">LLM · Copy Narration Only</span>
+                    <span className="ai-trust-pill">LLM · Narration only</span>
                   </div>
                   <p className="ai-summary-body">{investigation.narrative.text}</p>
 
@@ -693,7 +656,7 @@ export default function InvestigationDetailPage() {
                     }}
                     disabled={deciding}
                   >
-                    Reject Action
+                    {deciding ? "Saving..." : "Reject Action"}
                   </button>
                   <button
                     className="primary-button approve-btn"
@@ -712,7 +675,7 @@ export default function InvestigationDetailPage() {
             <section className="investigation-section">
               <div className="detail-screen-nav margin-bottom-md">
                 <button className="secondary-button nav-back-top" onClick={() => setStage(STAGE.RCA_RESULTS)}>
-                  <ArrowLeft size={16} /> Back to All Causes
+                  <ArrowLeft size={16} /> Back to RCA List
                 </button>
               </div>
 
