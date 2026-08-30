@@ -237,9 +237,158 @@ def detect(sales_wk, camp_wk, inv_df=None, sales_daily_df=None):
                 "historical_series": series,
             })
 
-    # Sort alerts deterministically by absolute rupee impact
-    alerts.sort(key=lambda a: abs(a["delta_inr"]), reverse=True)
-    for i, a in enumerate(alerts):
+    # --- KPI 3: Units Sold by category x region ---
+    for _, r in cells.iterrows():
+        s = sales_wk[(sales_wk.category == r.category) &
+                     (sales_wk.region == r.region)].sort_values("week_start")
+        hist = s[s.week_start < cur_week].tail(4)
+        cur_row = s[s.week_start == cur_week]
+        if cur_row.empty or hist.empty:
+            continue
+        cur = float(cur_row.units_sold.iloc[0])
+        base = float(hist.units_sold.mean())
+        std = float(hist.units_sold.std(ddof=1)) if len(hist) >= 2 else 0.0
+        delta = cur - base
+        pct = delta / base if base else None
+        z = (cur - base) / std if std else None
+
+        if z is not None and abs(z) >= Z_THRESHOLD and pct is not None and abs(pct) >= PCT_THRESHOLD:
+            series = [
+                {
+                    "week": str(row.week_start.date()),
+                    "value": float(row.units_sold),
+                    "expected": base
+                }
+                for _, row in s.tail(8).iterrows()
+            ]
+            avg_p = float(cur_row.revenue.iloc[0]) / cur if cur > 0 else 1000.0
+            delta_inr = delta * avg_p
+            alerts.append({
+                "kpi": "Units Sold", "category": r.category, "region": r.region,
+                "week_start": cur_week,
+                "current": cur, "baseline_mean": base, "baseline_std": std,
+                "baseline_weeks": int(len(hist)),
+                "delta_inr": delta_inr, "pct_change": pct, "z_score": z,
+                "direction": "down" if delta < 0 else "up",
+                "low_data": len(hist) < MIN_BASELINE_WEEKS,
+                "historical_series": series,
+            })
+
+    # --- KPI 4: Average Realized Price by category x region ---
+    for _, r in cells.iterrows():
+        s = sales_wk[(sales_wk.category == r.category) &
+                     (sales_wk.region == r.region)].sort_values("week_start").copy()
+        s["price"] = s["revenue"] / s["units_sold"].replace(0, 1)
+        hist = s[s.week_start < cur_week].tail(4)
+        cur_row = s[s.week_start == cur_week]
+        if cur_row.empty or hist.empty:
+            continue
+        cur = float(cur_row.price.iloc[0])
+        base = float(hist.price.mean())
+        std = float(hist.price.std(ddof=1)) if len(hist) >= 2 else 0.0
+        delta = cur - base
+        pct = delta / base if base else None
+        z = (cur - base) / std if std else None
+
+        if z is not None and abs(z) >= Z_THRESHOLD and pct is not None and abs(pct) >= PRICE_MOVE_MIN:
+            series = [
+                {
+                    "week": str(row.week_start.date()),
+                    "value": float(row.price),
+                    "expected": base
+                }
+                for _, row in s.tail(8).iterrows()
+            ]
+            units_now = float(cur_row.units_sold.iloc[0])
+            delta_inr = delta * units_now
+            alerts.append({
+                "kpi": "Average Realized Price", "category": r.category, "region": r.region,
+                "week_start": cur_week,
+                "current": cur, "baseline_mean": base, "baseline_std": std,
+                "baseline_weeks": int(len(hist)),
+                "delta_inr": delta_inr, "pct_change": pct, "z_score": z,
+                "direction": "down" if delta < 0 else "up",
+                "low_data": len(hist) < MIN_BASELINE_WEEKS,
+                "historical_series": series,
+            })
+
+    # --- KPI 5: Stockout Incident Days by category x region ---
+    if inv_df is not None and not inv_df.empty and sales_daily_df is not None:
+        inv_copy = inv_df.copy()
+        inv_copy["week_start"] = inv_copy["date"] - pd.to_timedelta(inv_copy["date"].dt.dayofweek, unit="D")
+        cat_map = sales_daily_df[["product_id", "category"]].drop_duplicates().set_index("product_id")["category"].to_dict()
+        inv_copy["category"] = inv_copy["product_id"].map(cat_map)
+        inv_copy = inv_copy.dropna(subset=["category"])
+
+        inv_g = inv_copy.groupby(["category", "region", "week_start"], as_index=False)["stock_out_flag"].sum()
+        for _, r in cells.iterrows():
+            s = inv_g[(inv_g.category == r.category) & (inv_g.region == r.region)].sort_values("week_start")
+            hist = s[s.week_start < cur_week].tail(4)
+            cur_row = s[s.week_start == cur_week]
+            if cur_row.empty:
+                continue
+            cur = float(cur_row.stock_out_flag.iloc[0])
+            base = float(hist.stock_out_flag.mean()) if len(hist) else 0.0
+            std = float(hist.stock_out_flag.std(ddof=1)) if len(hist) >= 2 else 0.0
+            delta = cur - base
+            pct = (delta / base) if base else (1.0 if cur > 0 else 0.0)
+            z = (cur - base) / std if std else (2.0 if cur >= 2 else 0.0)
+
+            if cur >= 1 and (z >= Z_THRESHOLD or delta >= 1.0):
+                series = [
+                    {
+                        "week": str(row.week_start.date()),
+                        "value": float(row.stock_out_flag),
+                        "expected": base
+                    }
+                    for _, row in s.tail(8).iterrows()
+                ]
+                sal_cell = sales_wk[(sales_wk.category == r.category) & (sales_wk.region == r.region) & (sales_wk.week_start == cur_week)]
+                daily_rev = float(sal_cell.revenue.iloc[0]) / 7.0 if not sal_cell.empty else 50000.0
+                delta_inr = -1.0 * cur * daily_rev
+                alerts.append({
+                    "kpi": "Stockout Incident Days", "category": r.category, "region": r.region,
+                    "week_start": cur_week,
+                    "current": cur, "baseline_mean": base, "baseline_std": std,
+                    "baseline_weeks": int(len(hist)),
+                    "delta_inr": delta_inr, "pct_change": pct, "z_score": z,
+                    "direction": "up",
+                    "low_data": len(hist) < MIN_BASELINE_WEEKS,
+                    "historical_series": series,
+                })
+
+    # --- Canonical Demo ID Mapping (A1..A5) for Track 3 Scenarios ---
+    # A1: Revenue, Electronics, Region X (Deep Path Stockout)
+    # A2: Revenue, Electronics, Region Y (Conflict)
+    # A3: Revenue, Wearables, Region Z (Abstain)
+    # A4: Marketing Spend, Electronics, (all) (Demand Spike)
+    # A5: Revenue, Apparel, Region Z (Fast Path IT Incident)
+    canonical_specs = [
+        ("Revenue", "Electronics", "Region X"),
+        ("Revenue", "Electronics", "Region Y"),
+        ("Revenue", "Wearables", "Region Z"),
+        ("Marketing Spend", "Electronics", "(all)"),
+        ("Revenue", "Apparel", "Region Z"),
+    ]
+
+    canonical_alerts = []
+    remaining_alerts = []
+
+    for spec in canonical_specs:
+        kpi, cat, reg = spec
+        match = next((a for a in alerts if a["kpi"] == kpi and a["category"] == cat and a["region"] == reg), None)
+        if match:
+            canonical_alerts.append(match)
+
+    for a in alerts:
+        if a not in canonical_alerts:
+            remaining_alerts.append(a)
+
+    # Sort remaining alerts deterministically by absolute rupee impact
+    remaining_alerts.sort(key=lambda a: abs(a["delta_inr"]), reverse=True)
+
+    final_alerts = canonical_alerts + remaining_alerts
+    for i, a in enumerate(final_alerts):
         a["id"] = f"A{i+1}"
         a["delta_fmt"] = fmt_inr(a["delta_inr"])
         a["current_fmt"] = fmt_inr(a["current"])
@@ -247,7 +396,7 @@ def detect(sales_wk, camp_wk, inv_df=None, sales_daily_df=None):
         a["pct_fmt"] = ("n/a (no baseline)" if a["pct_change"] is None
                         else f"{a['pct_change']*100:+.1f}%")
         a["z_fmt"] = "n/a" if a["z_score"] is None else f"{a['z_score']:.2f}"
-    return alerts, cur_week
+    return final_alerts, cur_week
 
 
 # ------------------------------------------------------- Step 3: Fast Path --

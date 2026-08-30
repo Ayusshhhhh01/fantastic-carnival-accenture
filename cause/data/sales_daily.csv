@@ -3803,7 +3803,7 @@ date,product_id,product_name,category,region,units_sold,unit_price,revenue
 2026-08-17,P204,CloudWeave Hoodie,Apparel,Region X,36,2199.0,79164.0
 2026-08-17,P204,CloudWeave Hoodie,Apparel,Region Y,19,2199.0,41781.0
 2026-08-17,P204,CloudWeave Hoodie,Apparel,Region Z,11,2199.0,24189.0
-2026-08-17,P301,ChefPro Blender,Home & Kitchen,Region X,22,5499.0,120978.0
+2026-08-17,P301,ChefPro Blender,Home & Kitchen,Region X,22,4399.0,96778.0
 2026-08-17,P301,ChefPro Blender,Home & Kitchen,Region Y,5,5499.0,27495.0
 2026-08-17,P301,ChefPro Blender,Home & Kitchen,Region Z,6,5499.0,32994.0
 2026-08-17,P302,AeroFry Air Cooker,Home & Kitchen,Region X,10,8999.0,89990.0
@@ -3848,7 +3848,7 @@ date,product_id,product_name,category,region,units_sold,unit_price,revenue
 2026-08-18,P204,CloudWeave Hoodie,Apparel,Region X,33,2199.0,72567.0
 2026-08-18,P204,CloudWeave Hoodie,Apparel,Region Y,13,2199.0,28587.0
 2026-08-18,P204,CloudWeave Hoodie,Apparel,Region Z,5,2199.0,10995.0
-2026-08-18,P301,ChefPro Blender,Home & Kitchen,Region X,18,5499.0,98982.0
+2026-08-18,P301,ChefPro Blender,Home & Kitchen,Region X,18,4399.0,79182.0
 2026-08-18,P301,ChefPro Blender,Home & Kitchen,Region Y,12,5499.0,65988.0
 2026-08-18,P301,ChefPro Blender,Home & Kitchen,Region Z,7,5499.0,38493.0
 2026-08-18,P302,AeroFry Air Cooker,Home & Kitchen,Region X,14,8999.0,125986.0
@@ -3893,7 +3893,7 @@ date,product_id,product_name,category,region,units_sold,unit_price,revenue
 2026-08-19,P204,CloudWeave Hoodie,Apparel,Region X,31,2199.0,68169.0
 2026-08-19,P204,CloudWeave Hoodie,Apparel,Region Y,11,2199.0,24189.0
 2026-08-19,P204,CloudWeave Hoodie,Apparel,Region Z,5,2199.0,10995.0
-2026-08-19,P301,ChefPro Blender,Home & Kitchen,Region X,19,5499.0,104481.0
+2026-08-19,P301,ChefPro Blender,Home & Kitchen,Region X,19,4399.0,83581.0
 2026-08-19,P301,ChefPro Blender,Home & Kitchen,Region Y,10,5499.0,54990.0
 2026-08-19,P301,ChefPro Blender,Home & Kitchen,Region Z,8,5499.0,43992.0
 2026-08-19,P302,AeroFry Air Cooker,Home & Kitchen,Region X,14,8999.0,125986.0
@@ -3939,7 +3939,7 @@ date,product_id,product_name,category,region,units_sold,unit_price,revenue
 2026-08-20,P204,CloudWeave Hoodie,Apparel,Region X,31,2199.0,68169.0
 2026-08-20,P204,CloudWeave Hoodie,Apparel,Region Y,23,2199.0,50577.0
 2026-08-20,P204,CloudWeave Hoodie,Apparel,Region Z,3,2199.0,6597.0
-2026-08-20,P301,ChefPro Blender,Home & Kitchen,Region X,16,5499.0,87984.0
+2026-08-20,P301,ChefPro Blender,Home & Kitchen,Region X,16,4399.0,70384.0
 2026-08-20,P301,ChefPro Blender,Home & Kitchen,Region Y,10,5499.0,54990.0
 2026-08-20,P301,ChefPro Blender,Home & Kitchen,Region Z,5,5499.0,27495.0
 2026-08-20,P302,AeroFry Air Cooker,Home & Kitchen,Region X,12,8999.0,107988.0
@@ -3985,7 +3985,7 @@ date,product_id,product_name,category,region,units_sold,unit_price,revenue
 2026-08-21,P204,CloudWeave Hoodie,Apparel,Region X,39,2199.0,85761.0
 2026-08-21,P204,CloudWeave Hoodie,Apparel,Region Y,25,2199.0,54975.0
 2026-08-21,P204,CloudWeave Hoodie,Apparel,Region Z,8,2199.0,17592.0
-2026-08-21,P301,ChefPro Blender,Home & Kitchen,Region X,22,5499.0,120978.0
+2026-08-21,P301,ChefPro Blender,Home & Kitchen,Region X,22,4399.0,96778.0
 2026-08-21,P301,ChefPro Blender,Home & Kitchen,Region Y,12,5499.0,65988.0
 2026-08-21,P301,ChefPro Blender,Home & Kitchen,Region Z,10,5499.0,54990.0
 2026-08-21,P302,AeroFry Air Cooker,Home & Kitchen,Region X,12,8999.0,107988.0
@@ -4031,7 +4031,7 @@ date,product_id,product_name,category,region,units_sold,unit_price,revenue
 2026-08-22,P204,CloudWeave Hoodie,Apparel,Region X,37,2199.0,81363.0
 2026-08-22,P204,CloudWeave Hoodie,Apparel,Region Y,33,2199.0,72567.0
 2026-08-22,P204,CloudWeave Hoodie,Apparel,Region Z,15,2199.0,32985.0
-2026-08-22,P301,ChefPro Blender,Home & Kitchen,Region X,18,5499.0,98982.0
+2026-08-22,P301,ChefPro Blender,Home & Kitchen,Region X,18,4399.0,79182.0
 2026-08-22,P301,ChefPro Blender,Home & Kitchen,Region Y,13,5499.0,71487.0
 2026-08-22,P301,ChefPro Blender,Home & Kitchen,Region Z,10,5499.0,54990.0
 2026-08-22,P302,AeroFry Air Cooker,Home & Kitchen,Region X,20,8999.0,179980.0
@@ -4077,7 +4077,7 @@ date,product_id,product_name,category,region,units_sold,unit_price,revenue
 2026-08-23,P204,CloudWeave Hoodie,Apparel,Region X,43,2199.0,94557.0
 2026-08-23,P204,CloudWeave Hoodie,Apparel,Region Y,21,2199.0,46179.0
 2026-08-23,P204,CloudWeave Hoodie,Apparel,Region Z,16,2199.0,35184.0
-2026-08-23,P301,ChefPro Blender,Home & Kitchen,Region X,15,5499.0,82485.0
+2026-08-23,P301,ChefPro Blender,Home & Kitchen,Region X,15,4399.0,65985.0
 2026-08-23,P301,ChefPro Blender,Home & Kitchen,Region Y,12,5499.0,65988.0
 2026-08-23,P301,ChefPro Blender,Home & Kitchen,Region Z,5,5499.0,27495.0
 2026-08-23,P302,AeroFry Air Cooker,Home & Kitchen,Region X,15,8999.0,134985.0

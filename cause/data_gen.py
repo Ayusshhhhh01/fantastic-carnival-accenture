@@ -1,7 +1,7 @@
 """
 CAUSE - Step 0: Synthetic data generator.
 
-Bakes in exactly four scenarios:
+Bakes in core scenarios across 5 KPI types:
   1. PRIMARY   : Electronics / Region X revenue drops ~18% in the final week.
                  Cause: top seller VoltX Pro 5G Phone stocked out 3 consecutive
                  days inside that week. Electronics campaign spend stays FLAT
@@ -13,6 +13,10 @@ Bakes in exactly four scenarios:
                  of history -> low completeness -> earned abstention.
   4. RED HERRING: no competitor/demand signal anywhere; demand-side hypothesis
                  honestly fails on the primary case.
+  5. MARKETING : Electronics / (all) weekly campaign spend spike (+220%).
+  6. FAST PATH : Apparel / Region Z dip caused by logged portal IT outage.
+  7. PRICE     : Home & Kitchen / Region X unit price shift (15% promotional discount).
+  8. STOCKOUT  : Beauty / Region Y stockout incident days.
 
 Also emits change_log.csv containing a portal-outage event (fast-path case)
 and deliberately NO entry for the electronics stock-outs (so the deep path
@@ -111,6 +115,12 @@ def build_sales() -> pd.DataFrame:
     df.loc[outage, "units_sold"] = (df.loc[outage, "units_sold"] * 0.35).astype(int)
     df.loc[outage, "revenue"] = df.loc[outage, "units_sold"] * df.loc[outage, "unit_price"]
 
+    # ---- Price Anomaly Case: Home & Kitchen / Region X promotional price discount ----
+    price_shift = (df.category == "Home & Kitchen") & (df.region == "Region X") & \
+                  (df.date >= ALERT_WEEK_START) & (df.product_id == "P301")
+    df.loc[price_shift, "unit_price"] = 4399.0  # Discounted from 5499 (20% price move)
+    df.loc[price_shift, "revenue"] = df.loc[price_shift, "units_sold"] * df.loc[price_shift, "unit_price"]
+
     return df.sort_values(["date", "product_id", "region"]).reset_index(drop=True)
 
 
@@ -166,6 +176,7 @@ def build_inventory(sales: pd.DataFrame) -> pd.DataFrame:
 
     force_stockout("P101", "Region X")     # primary case
     force_stockout("P102", "Region Y")     # conflict case
+    force_stockout("P401", "Region Y")     # Beauty / Region Y stockout case
 
     # one old harmless flag far from the window (realistic noise)
     old = (df.product_id == "P402") & (df.region == "Region Z") & \
@@ -196,21 +207,4 @@ if __name__ == "__main__":
     inventory.to_csv(DATA / "inventory_daily.csv", index=False)
     changelog.to_csv(DATA / "change_log.csv", index=False)
 
-    # sanity print of the four baked scenarios
-    wk = sales.groupby(["category", "region",
-                        pd.Grouper(key="date", freq="W-SUN")])["revenue"].sum()
-    ex = wk.loc[("Electronics", "Region X")].sort_index()
-    ey = wk.loc[("Electronics", "Region Y")].sort_index()
-    print("Electronics/X last 2 weeks:",
-          f"{ex.iloc[-2]:,.0f} -> {ex.iloc[-1]:,.0f} "
-          f"({(ex.iloc[-1]/ex.iloc[-2]-1)*100:+.1f}%)")
-    print("Electronics/Y last 2 weeks:",
-          f"{ey.iloc[-2]:,.0f} -> {ey.iloc[-1]:,.0f} "
-          f"({(ey.iloc[-1]/ey.iloc[-2]-1)*100:+.1f}%)")
-    az = wk.loc[("Apparel", "Region Z")].sort_index()
-    print("Apparel/Z last 2 weeks:",
-          f"{az.iloc[-2]:,.0f} -> {az.iloc[-1]:,.0f} "
-          f"({(az.iloc[-1]/az.iloc[-2]-1)*100:+.1f}%)")
-    wz = wk.loc[("Wearables", "Region Z")].sort_index()
-    print("Wearables/Z weeks:", len(wz), "| history days:",
-          (sales.category == "Wearables").sum())
+    print("Synthetic telemetry data generated successfully across 5 KPI types.")
