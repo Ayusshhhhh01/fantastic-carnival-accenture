@@ -19,9 +19,9 @@ class AnalysisService:
         if self._dashboard is None or refresh:
             self._dashboard = self.pipeline.execute()
         
-        # Filter out handled/approved alert IDs from active dashboard list
+        # Always dynamically re-read decisions.csv on every dashboard call
         handled_ids = self.decisions.get_handled_alert_ids()
-        if handled_ids and self._dashboard and "alerts" in self._dashboard:
+        if self._dashboard and "alerts" in self._dashboard:
             filtered_alerts = [a for a in self._dashboard["alerts"] if str(a.get("alert", {}).get("id")) not in handled_ids]
             res = dict(self._dashboard)
             res["alerts"] = filtered_alerts
