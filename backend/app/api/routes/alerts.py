@@ -8,8 +8,11 @@ router = APIRouter(prefix="/api/v1", tags=["alerts"])
 
 
 @router.get("/dashboard", response_model=DashboardResponse)
-def dashboard(service: AnalysisService = Depends(get_analysis_service)) -> DashboardResponse:
-    return DashboardResponse.model_validate(service.dashboard())
+def dashboard(
+    persona: str = Query("Category Manager", pattern="^(Category Manager|CXO)$"),
+    service: AnalysisService = Depends(get_analysis_service)
+) -> DashboardResponse:
+    return DashboardResponse.model_validate(service.dashboard(persona=persona))
 
 
 @router.get("/alerts/{alert_id}", response_model=AnalysisResponse)

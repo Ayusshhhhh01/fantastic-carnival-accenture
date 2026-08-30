@@ -14,7 +14,8 @@ async function request(path, options = {}) {
   return response.json();
 }
 
-export const getDashboard = () => request("/api/v1/dashboard");
+export const getDashboard = (persona = "Category Manager") =>
+  request(`/api/v1/dashboard?persona=${encodeURIComponent(persona)}`);
 export const getNarrative = (id, persona) =>
   request(`/api/v1/alerts/${id}/narrative?persona=${encodeURIComponent(persona)}`);
 export const getAlert = (id) =>

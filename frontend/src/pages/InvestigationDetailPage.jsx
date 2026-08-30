@@ -119,10 +119,10 @@ export default function InvestigationDetailPage() {
             </h2>
 
             <div className="triage-step-item">
-              <div className="triage-path-label">PATH 1: Direct Event Match</div>
+              <div className="triage-path-label">CHECKING RECENT CHANGE LOGS</div>
               <div className="triage-status-row">
                 <Activity size={18} className="spin" color="#7800c4" />
-                <span>Checking Change Log for direct operational events...</span>
+                <span>Looking for a recent pricing, promotion, inventory or operational event that could explain this signal...</span>
               </div>
             </div>
           </div>
@@ -172,7 +172,7 @@ export default function InvestigationDetailPage() {
         </div>
         <div className="header-right">
           <span className={`path-indicator ${investigation.path_type === "FAST" ? "fast" : stage === STAGE.ABSTAIN ? "abstain" : stage === STAGE.CONFLICT ? "conflict" : "resolved"}`}>
-            {investigation.path_type === "FAST" ? "Path 1 · Direct Event Match" : stage === STAGE.ABSTAIN ? "Diagnostic Abstention" : stage === STAGE.CONFLICT ? "Contradictory Signals" : "Path 2 · Deep Causal Research"}
+            {investigation.path_type === "FAST" ? "Matching Change Found" : stage === STAGE.ABSTAIN ? "Diagnostic Abstention" : stage === STAGE.CONFLICT ? "Contradictory Signals" : "Expanded Investigation"}
           </span>
         </div>
       </header>
@@ -193,7 +193,7 @@ export default function InvestigationDetailPage() {
               <div className="fast-path-header">
                 <CheckCircle2 size={28} color="#38a169" />
                 <div>
-                  <span className="fast-path-badge">DIRECT EVENT MATCH FOUND</span>
+                  <span className="fast-path-badge">MATCHING RECENT CHANGE FOUND</span>
                   <h2>Verified Operational Event Match</h2>
                   <p className="fast-path-sub">
                     Direct change-log event: <strong>[{investigation.fast_path?.event_type}]</strong> on <strong>{investigation.fast_path?.event_date}</strong>.

@@ -32,7 +32,7 @@ KPI_REGISTRY = {
         "display_name": "Gross Revenue",
         "role_in_pipeline": "Anomaly Detection Signal",
         "formula": "Σ(units_sold × unit_price)",
-        "grain": "Weekly (resampled from Daily POS)",
+        "grain": "Weekly (Category × Region × Week)",
         "source_table": "sales_daily.csv",
         "baseline_method": "Trailing 4-week moving average (μ ± 1.5σ)",
         "materiality_rule": "|z| ≥ 1.5 AND |Δ| ≥ 10%",
@@ -43,7 +43,7 @@ KPI_REGISTRY = {
         "display_name": "Marketing Spend",
         "role_in_pipeline": "Anomaly Detection Signal",
         "formula": "Σ(campaign_spend)",
-        "grain": "Weekly (CRM campaign cycle)",
+        "grain": "Weekly (Category × Week)",
         "source_table": "campaigns_weekly.csv",
         "baseline_method": "Trailing 4-week moving average (μ ± 1.5σ)",
         "materiality_rule": "|z| ≥ 1.5 AND |Δ| ≥ 10%",
@@ -54,9 +54,9 @@ KPI_REGISTRY = {
         "display_name": "Volume / Units Sold",
         "role_in_pipeline": "Connected Causal Evidence / Driver",
         "formula": "Σ(units_sold)",
-        "grain": "Weekly (resampled from Daily POS)",
+        "grain": "Weekly (Category × Region × Week)",
         "source_table": "sales_daily.csv",
-        "baseline_method": "Trailing 4-week moving average",
+        "baseline_method": "Trailing 4-week moving average (μ ± 1.5σ)",
         "materiality_rule": "|z| ≥ 1.5 AND |Δ| ≥ 10%",
         "connected_drivers": ["Stockouts", "Campaign Conversions", "Price Elasticity"],
         "access_entitlement": {"Category Manager": "SKU & Regional Volume", "CXO": "Category Aggregate Volume"},
@@ -65,7 +65,7 @@ KPI_REGISTRY = {
         "display_name": "Stockout Incident Exposure",
         "role_in_pipeline": "Connected Causal Evidence / Driver",
         "formula": "Count(stock_out_flag == 1)",
-        "grain": "Daily ERP inventory telemetry",
+        "grain": "Weekly (Category × Region × Week)",
         "source_table": "inventory_daily.csv",
         "baseline_method": "Zero-incident standard (outage > 0 days triggers exposure check)",
         "materiality_rule": "≥ 1 stock-out day in alert window",
@@ -76,7 +76,7 @@ KPI_REGISTRY = {
         "display_name": "Average Realized Unit Price",
         "role_in_pipeline": "Connected Causal Evidence / Driver",
         "formula": "Gross Revenue / Units Sold",
-        "grain": "Weekly (resampled from Daily POS)",
+        "grain": "Weekly (Category × Region × Week)",
         "source_table": "sales_daily.csv",
         "baseline_method": "Trailing 4-week weighted average price",
         "materiality_rule": "|Δ Price| ≥ 5%",
@@ -155,7 +155,7 @@ def to_weekly(df, date_col, value_cols, dims):
 
 
 # ------------------------------------------------ Step 1: detect anomalies --
-def detect(sales_wk, camp_wk):
+def detect(sales_wk, camp_wk, inv_df=None, sales_daily_df=None):
     alerts = []
     cur_week = sales_wk.week_start.max()
 
@@ -237,7 +237,7 @@ def detect(sales_wk, camp_wk):
                 "historical_series": series,
             })
 
-    # sort by absolute rupee impact, not %
+    # Sort alerts deterministically by absolute rupee impact
     alerts.sort(key=lambda a: abs(a["delta_inr"]), reverse=True)
     for i, a in enumerate(alerts):
         a["id"] = f"A{i+1}"
@@ -1223,7 +1223,7 @@ def run():
                "already weekly.")
 
     t0 = time.perf_counter()
-    alerts, cur_week = detect(sales_wk, camps_wk)
+    alerts, cur_week = detect(sales_wk, camps_wk, inv, sales)
     ledger.add("Step 1 Detect anomalies", "Deterministic", t0,
                f"{len(alerts)} material alerts (threshold: |z|>=1.5 AND "
                f"|delta|>=10%), sorted by rupee impact")

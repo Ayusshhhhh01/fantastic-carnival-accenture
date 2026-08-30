@@ -15,7 +15,45 @@ class AnalysisService:
         self.decisions = decisions or DecisionRepository(get_settings().decisions_path)
         self._dashboard: dict[str, Any] | None = None
 
-    def dashboard(self, refresh: bool = False) -> dict[str, Any]:
+    def _prioritize_alerts_for_persona(self, alerts_list: list[dict[str, Any]], persona: str) -> list[dict[str, Any]]:
+        """
+        Applies persona-specific prioritization lens to the common alert pool.
+        Category Manager Lens: Prioritizes operational velocity (Units Sold > Stockout Exposure > Price > Revenue > Marketing Spend).
+        CXO Lens: Prioritizes strategic financial impact (Revenue > Marketing Spend > Price > Stockout Exposure > Units Sold).
+        Analytical truth, evidence, and scores remain 100% identical.
+        """
+        if persona == "CXO":
+            kpi_rank = {
+                "Revenue": 1,
+                "Marketing Spend": 2,
+                "Average Realized Price": 3,
+                "Stockout Exposure": 4,
+                "Units Sold": 5
+            }
+            return sorted(
+                alerts_list,
+                key=lambda item: (
+                    -abs(item.get("alert", {}).get("delta_inr", 0) or 0),
+                    kpi_rank.get(item.get("alert", {}).get("kpi"), 6)
+                )
+            )
+        else:
+            kpi_rank = {
+                "Units Sold": 1,
+                "Stockout Exposure": 2,
+                "Average Realized Price": 3,
+                "Revenue": 4,
+                "Marketing Spend": 5
+            }
+            return sorted(
+                alerts_list,
+                key=lambda item: (
+                    kpi_rank.get(item.get("alert", {}).get("kpi"), 6),
+                    -abs(item.get("alert", {}).get("delta_inr", 0) or 0)
+                )
+            )
+
+    def dashboard(self, refresh: bool = False, persona: str = "Category Manager") -> dict[str, Any]:
         if self._dashboard is None or refresh:
             self._dashboard = self.pipeline.execute()
         
@@ -23,8 +61,10 @@ class AnalysisService:
         handled_ids = self.decisions.get_handled_alert_ids()
         if self._dashboard and "alerts" in self._dashboard:
             filtered_alerts = [a for a in self._dashboard["alerts"] if str(a.get("alert", {}).get("id")) not in handled_ids]
+            prioritized = self._prioritize_alerts_for_persona(filtered_alerts, persona)
             res = dict(self._dashboard)
-            res["alerts"] = filtered_alerts
+            res["alerts"] = prioritized
+            res["active_persona"] = persona
             return res
 
         return self._dashboard
@@ -88,5 +128,5 @@ class AnalysisService:
             "rag_evidence": result.get("rag_evidence", []),
             "persona": persona,
             "narrative": narrative,
-            "ledger_rows": self.dashboard().get("ledger_rows", [])
+            "ledger_rows": self.dashboard(persona=persona).get("ledger_rows", [])
         }

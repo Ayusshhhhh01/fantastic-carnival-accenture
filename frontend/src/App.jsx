@@ -20,7 +20,7 @@ function formatImpact(value) {
 }
 
 function routeLabel(route) {
-  return { RESOLVED: "Diagnosed", FAST_PATH: "Direct match", UNRESOLVED_CONFLICT: "Conflict", ABSTAIN: "Low evidence" }[route] || route;
+  return { RESOLVED: "Diagnosed", FAST_PATH: "Direct Match", UNRESOLVED_CONFLICT: "Conflict", ABSTAIN: "Low Evidence" }[route] || route;
 }
 
 function DashboardPage() {
@@ -36,11 +36,11 @@ function DashboardPage() {
   const [handled, setHandled] = useState({});
   const [toastMessage, setToastMessage] = useState("");
 
-  async function loadDashboard() {
+  async function loadDashboard(currentPersona = persona) {
     setBusy(true);
     setError("");
     try {
-      setDashboard(await getDashboard());
+      setDashboard(await getDashboard(currentPersona));
     } catch (err) {
       setError(err.message || "Failed to connect to decision server");
     } finally {
@@ -49,8 +49,8 @@ function DashboardPage() {
   }
 
   useEffect(() => {
-    loadDashboard();
-  }, []);
+    loadDashboard(persona);
+  }, [persona]);
 
   const visibleAlerts = useMemo(() => {
     if (!dashboard || !dashboard.alerts) return [];
@@ -85,7 +85,7 @@ function DashboardPage() {
     try {
       await resetDemo();
       setHandled({});
-      await loadDashboard();
+      await loadDashboard(persona);
       showToast("Demo queue restored with initial signals");
     } catch (err) {
       setError("Failed to reset demo queue: " + err.message);
@@ -134,7 +134,7 @@ function DashboardPage() {
           <button className="icon-button" title="Reset Demo Queue" onClick={handleResetDemo}>
             <RotateCcw size={17} />
           </button>
-          <button className="icon-button" title="Refresh dashboard" onClick={loadDashboard}>
+          <button className="icon-button" title="Refresh dashboard" onClick={() => loadDashboard(persona)}>
             <RefreshCw size={17} className={busy ? "spin" : ""} />
           </button>
         </div>
@@ -164,7 +164,7 @@ function DashboardPage() {
               <strong>Unable to load telemetry signals</strong>
               <p>{error}</p>
             </div>
-            <button className="secondary-button margin-top-sm" onClick={loadDashboard}>
+            <button className="secondary-button margin-top-sm" onClick={() => loadDashboard(persona)}>
               Retry Loading
             </button>
           </div>
@@ -198,12 +198,14 @@ function DashboardPage() {
 
         <section className="queue-head">
           <div>
-            <p className="eyebrow">Prioritized queue</p>
+            <p className="eyebrow">Prioritized queue ({persona} Lens)</p>
             <h2>
               Telemetry anomalies <span>{visibleAlerts.length}</span>
             </h2>
           </div>
-          <span className="queue-note">Ranked by financial impact</span>
+          <span className="queue-note">
+            {persona === "CXO" ? "Ranked by financial impact & strategic risk" : "Ranked by operational velocity & driver impact"}
+          </span>
         </section>
 
         <section className="queue">
