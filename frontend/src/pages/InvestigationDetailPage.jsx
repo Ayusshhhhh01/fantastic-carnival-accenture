@@ -2,15 +2,11 @@ import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
   ArrowLeft,
-  ChevronDown,
-  ChevronUp,
   ChevronRight,
   AlertCircle,
   CheckCircle2,
   ShieldAlert,
   Activity,
-  X,
-  Check,
   HelpCircle,
   FileText,
   ArrowRight
@@ -191,7 +187,6 @@ export default function InvestigationDetailPage() {
   }
 
   const alert = investigation.alert || {};
-  const topHypothesis = investigation.hypotheses?.find((h) => h.supported) || investigation.hypotheses?.[0];
 
   return (
     <div className="investigation-shell">
@@ -274,7 +269,7 @@ export default function InvestigationDetailPage() {
               )}
 
               <div className="feedback-actions-row margin-top-md">
-                <button className="secondary-button" onClick={() => handleDecision("rejected")} disabled={deciding}>
+                <button className="secondary-button reject-btn" onClick={() => handleDecision("rejected")} disabled={deciding}>
                   {deciding ? "Saving..." : "Reject Action"}
                 </button>
                 <button className="primary-button approve-btn" onClick={() => handleDecision("approved")} disabled={deciding}>
@@ -400,7 +395,7 @@ export default function InvestigationDetailPage() {
                 <div className="section-title">
                   <div>
                     <h2>COMPETING CAUSES EVALUATED (4)</h2>
-                    <small className="section-subtitle">Deterministically evaluated & falsified hypotheses</small>
+                    <p className="section-subtitle">Deterministically evaluated & falsified operational hypotheses</p>
                   </div>
                   <div className="view-mode-actions">
                     <button className="primary-button" onClick={() => setStage(STAGE.OVERALL_RECOMMENDATION)}>
@@ -418,34 +413,45 @@ export default function InvestigationDetailPage() {
 
                     return (
                       <div key={idx} className={`hypothesis-row-card ${hyp.supported ? "supported-card" : "rejected-card"}`}>
-                        <div className="hypothesis-row-head">
-                          <div className="hyp-row-left">
-                            <span className="hyp-index">{idx + 1}.</span>
-                            <strong className="hyp-name">{hyp.name}</strong>
-                            <span className={`verdict-pill ${hyp.supported ? "supported" : "rejected"}`}>
-                              {hyp.supported ? "Supported" : "Falsified / Rejected"}
-                            </span>
+                        <div className="hypothesis-card-inner">
+                          <div className="hyp-card-top-bar">
+                            <div className="hyp-rank-title-group">
+                              <span className="hyp-rank-badge">#{idx + 1}</span>
+                              <div>
+                                <h3 className="hyp-title">{hyp.name}</h3>
+                                <span className={`verdict-pill ${hyp.supported ? "supported" : "rejected"}`}>
+                                  {hyp.supported ? "Supported Root Cause" : "Falsified / Rejected"}
+                                </span>
+                              </div>
+                            </div>
+                            <div className="hyp-confidence-badge">
+                              <small>CONFIDENCE</small>
+                              <strong>{scorePct}%</strong>
+                            </div>
                           </div>
 
-                          <div className="hyp-row-right">
-                            <span className="score-val">{scorePct}%</span>
+                          <p className="hyp-verdict-text">
+                            {hyp.verdict_summary || hyp.deciding_value || "Deterministically evaluated against empirical operational telemetry."}
+                          </p>
+
+                          <div className="hyp-card-action-bar">
                             <button
-                              className="secondary-button collapse-btn"
+                              className="secondary-button"
                               onClick={() => {
                                 setSelectedCauseIndex(idx);
                                 setStage(STAGE.RCA_DETAIL);
                               }}
                             >
-                              Expand <ChevronRight size={15} />
+                              Expand Cause Details <ChevronRight size={15} />
                             </button>
                             <button
-                              className="secondary-button cause-rec-btn"
+                              className="secondary-button"
                               onClick={() => {
                                 setCauseRecModal(hyp);
                                 setStage(STAGE.CAUSE_RECOMMENDATION);
                               }}
                             >
-                              Recommendation
+                              View Cause Directive
                             </button>
                           </div>
                         </div>
@@ -460,9 +466,13 @@ export default function InvestigationDetailPage() {
           {/* ------------------------------------------- STAGE 2E: ROOT CAUSE DETAIL SCREEN -- */}
           {stage === STAGE.RCA_DETAIL && selectedCauseIndex !== null && investigation.hypotheses?.[selectedCauseIndex] && (
             <section className="investigation-section rca-detail-screen">
+              {/* BACK BUTTON AT TOP ONLY */}
               <div className="detail-screen-nav margin-bottom-md">
-                <button className="secondary-button" onClick={() => setStage(STAGE.RCA_RESULTS)}>
-                  <ArrowLeft size={16} /> Back to RCA Causes List
+                <button className="secondary-button nav-back-top" onClick={() => setStage(STAGE.RCA_RESULTS)}>
+                  <ArrowLeft size={16} /> Back to All Causes
+                </button>
+                <button className="primary-button" onClick={() => setStage(STAGE.OVERALL_RECOMMENDATION)}>
+                  View Overall Recommendation <ArrowRight size={16} />
                 </button>
               </div>
 
@@ -481,11 +491,11 @@ export default function InvestigationDetailPage() {
                       <p className="spotlight-verdict">{hyp.verdict_summary || hyp.deciding_value || "Telemetry patterns deterministically evaluated."}</p>
                     </div>
 
-                    {/* 4 CLEAR AREAS IN ROOT CAUSE DETAIL */}
+                    {/* 4 CLEAR SPACIOUS AREAS IN ROOT CAUSE DETAIL */}
                     <div className="detail-4-areas-grid">
                       {/* 1. EVIDENCE */}
                       <div className="area-box">
-                        <strong className="area-title">1. EVIDENCE PROVENANCE</strong>
+                        <h3 className="area-title">1. EVIDENCE PROVENANCE</h3>
                         <div className="evidence-reasoning-grid margin-top-sm">
                           <div className="reasoning-box supporting">
                             <strong>Supporting Evidence</strong>
@@ -500,7 +510,7 @@ export default function InvestigationDetailPage() {
 
                       {/* 2. KPI SNAPSHOT */}
                       <div className="area-box margin-top-md">
-                        <strong className="area-title">2. REAL KPI HISTORICAL SNAPSHOT</strong>
+                        <h3 className="area-title">2. REAL KPI HISTORICAL SNAPSHOT</h3>
                         <div className="margin-top-sm">
                           <KPIChart alert={alert} />
                         </div>
@@ -508,18 +518,18 @@ export default function InvestigationDetailPage() {
 
                       {/* 3. WEIGHTED EVIDENCE CONFIDENCE */}
                       <div className="area-box margin-top-md">
-                        <strong className="area-title">3. WEIGHTED EVIDENCE CONFIDENCE MODEL</strong>
+                        <h3 className="area-title">3. WEIGHTED EVIDENCE CONFIDENCE MODEL</h3>
                         <div className="confidence-breakdown-row margin-top-sm">
-                          <div><span>Temporal Correlation (W1):</span> <strong>{investigation.confidence?.components?.temporal_correlation ?? '1.0'}</strong></div>
-                          <div><span>Source Reliability (W2):</span> <strong>{investigation.confidence?.components?.source_agreement ?? '1.0'}</strong></div>
-                          <div><span>Hypothesis Margin (W3):</span> <strong>{investigation.confidence?.components?.hypothesis_margin ?? '0.8'}</strong></div>
-                          <div><span>Data Completeness (W4):</span> <strong>{investigation.confidence?.components?.data_completeness ?? '1.0'}</strong></div>
+                          <div className="conf-stat-card"><span>Temporal Correlation (W1)</span> <strong>{investigation.confidence?.components?.temporal_correlation ?? '1.0'}</strong></div>
+                          <div className="conf-stat-card"><span>Source Reliability (W2)</span> <strong>{investigation.confidence?.components?.source_agreement ?? '1.0'}</strong></div>
+                          <div className="conf-stat-card"><span>Hypothesis Margin (W3)</span> <strong>{investigation.confidence?.components?.hypothesis_margin ?? '0.8'}</strong></div>
+                          <div className="conf-stat-card"><span>Data Completeness (W4)</span> <strong>{investigation.confidence?.components?.data_completeness ?? '1.0'}</strong></div>
                         </div>
                       </div>
 
                       {/* 4. CONFLICT AUDIT */}
                       <div className="area-box margin-top-md">
-                        <strong className="area-title">4. CONFLICT AUDIT STATUS</strong>
+                        <h3 className="area-title">4. CONFLICT AUDIT STATUS</h3>
                         <div className="margin-top-sm">
                           {investigation.route === "UNRESOLVED_CONFLICT" ? (
                             <p className="negative font-bold">Conflict Detected: Cross-regional benchmark signals contradict expected trajectory.</p>
@@ -528,15 +538,6 @@ export default function InvestigationDetailPage() {
                           )}
                         </div>
                       </div>
-                    </div>
-
-                    <div className="detail-actions-row margin-top-md">
-                      <button className="secondary-button" onClick={() => setStage(STAGE.RCA_RESULTS)}>
-                        Return to RCA Causes
-                      </button>
-                      <button className="primary-button" onClick={() => setStage(STAGE.OVERALL_RECOMMENDATION)}>
-                        View Overall Recommendation <ArrowRight size={16} />
-                      </button>
                     </div>
                   </div>
                 );
@@ -548,8 +549,8 @@ export default function InvestigationDetailPage() {
           {stage === STAGE.CAUSE_RECOMMENDATION && causeRecModal && (
             <section className="investigation-section cause-recommendation-screen">
               <div className="detail-screen-nav margin-bottom-md">
-                <button className="secondary-button" onClick={() => setStage(STAGE.RCA_RESULTS)}>
-                  <ArrowLeft size={16} /> Back to RCA Causes List
+                <button className="secondary-button nav-back-top" onClick={() => setStage(STAGE.RCA_RESULTS)}>
+                  <ArrowLeft size={16} /> Back to All Causes
                 </button>
               </div>
 
@@ -566,9 +567,6 @@ export default function InvestigationDetailPage() {
                 </div>
 
                 <div className="margin-top-md flex-gap">
-                  <button className="secondary-button" onClick={() => setStage(STAGE.RCA_RESULTS)}>
-                    Back to Causes
-                  </button>
                   <button className="primary-button" onClick={() => setStage(STAGE.OVERALL_RECOMMENDATION)}>
                     View Overall Solution <ArrowRight size={16} />
                   </button>
@@ -580,22 +578,24 @@ export default function InvestigationDetailPage() {
           {/* ------------------------------------------- STAGE 2G: OVERALL RECOMMENDATION SCREEN -- */}
           {stage === STAGE.OVERALL_RECOMMENDATION && investigation.recommendation && (
             <section className="investigation-section recommendation-primary-card">
+              {/* BACK BUTTON AT TOP ONLY */}
               <div className="detail-screen-nav margin-bottom-md">
-                <button className="secondary-button" onClick={() => setStage(STAGE.RCA_RESULTS)}>
-                  <ArrowLeft size={16} /> Back to RCA Causes List
+                <button className="secondary-button nav-back-top" onClick={() => setStage(STAGE.RCA_RESULTS)}>
+                  <ArrowLeft size={16} /> Back to All Causes
                 </button>
               </div>
 
-              <div className="rec-eyebrow-row">
-                <span className="rec-eyebrow">RECOMMENDED ACTION DIRECTIVE</span>
-                <span className="rec-owner-badge">Owner: {investigation.recommendation.owner}</span>
+              <div className="rec-header-block">
+                <div className="rec-eyebrow-row">
+                  <span className="rec-eyebrow">RECOMMENDED ACTION DIRECTIVE</span>
+                  <span className="rec-owner-badge">Owner: {investigation.recommendation.owner}</span>
+                </div>
+                <h2 className="rec-main-action">{investigation.recommendation.action}</h2>
               </div>
 
-              <h2 className="rec-main-action">{investigation.recommendation.action}</h2>
-
               {investigation.recommendation.estimated_impact && (
-                <div className="rec-impact-banner margin-top-sm">
-                  <span>Expected Recovery:</span>
+                <div className="rec-impact-banner margin-top-md">
+                  <span>Expected Outcome / Recovery:</span>
                   <strong>{investigation.recommendation.est_impact_fmt || `₹${investigation.recommendation.estimated_impact.toLocaleString("en-IN")}`} / wk</strong>
                 </div>
               )}
@@ -623,8 +623,8 @@ export default function InvestigationDetailPage() {
               {investigation.narrative && (
                 <div className="ai-summary-container margin-top-md">
                   <div className="ai-summary-head">
-                    <span className="ai-summary-title">Executive Summary</span>
-                    <span className="ai-trust-pill">LLM · Narration only</span>
+                    <span className="ai-summary-title">Governed LLM Executive Summary</span>
+                    <span className="ai-trust-pill">LLM · Copy Narration Only</span>
                   </div>
                   <p className="ai-summary-body">{investigation.narrative.text}</p>
 
@@ -648,9 +648,9 @@ export default function InvestigationDetailPage() {
                 </div>
               )}
 
-              {/* FEEDBACK & DECISION FORM */}
+              {/* FEEDBACK & DECISION ACTION AREA */}
               <div className="feedback-card margin-top-md">
-                <h3>Was this recommendation useful?</h3>
+                <h3>Decision & Action Feedback</h3>
                 <p className="feedback-sub">Persist your decision to calibrate future hypothesis weights.</p>
 
                 {decisionType === "rejected" && (
@@ -711,8 +711,8 @@ export default function InvestigationDetailPage() {
           {stage === STAGE.EVIDENCE_AUDIT && (
             <section className="investigation-section">
               <div className="detail-screen-nav margin-bottom-md">
-                <button className="secondary-button" onClick={() => setStage(STAGE.RCA_RESULTS)}>
-                  <ArrowLeft size={16} /> Back to RCA Causes List
+                <button className="secondary-button nav-back-top" onClick={() => setStage(STAGE.RCA_RESULTS)}>
+                  <ArrowLeft size={16} /> Back to All Causes
                 </button>
               </div>
 
