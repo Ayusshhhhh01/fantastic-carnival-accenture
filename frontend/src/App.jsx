@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { BrowserRouter as Router, Routes, Route, useNavigate } from "react-router-dom";
-import { Activity, ArrowUpRight, Check, CircleAlert, RefreshCw, X } from "lucide-react";
-import { getDashboard } from "./api/index.js";
+import { Activity, ArrowUpRight, Check, CircleAlert, RefreshCw, X, RotateCcw } from "lucide-react";
+import { getDashboard, saveDecision, resetDemo } from "./api/index.js";
 import LoginPage from "./pages/LoginPage.jsx";
 import InvestigationDetailPage from "./pages/InvestigationDetailPage.jsx";
 import KPIChart from "./components/KPIChart.jsx";
@@ -42,7 +42,7 @@ function DashboardPage() {
     try {
       setDashboard(await getDashboard());
     } catch (err) {
-      setError(err.message);
+      setError(err.message || "Failed to connect to decision server");
     } finally {
       setBusy(false);
     }
@@ -53,8 +53,8 @@ function DashboardPage() {
   }, []);
 
   const visibleAlerts = useMemo(() => {
-    if (!dashboard) return [];
-    const categories = PERSONAS[persona].categories;
+    if (!dashboard || !dashboard.alerts) return [];
+    const categories = PERSONAS[persona]?.categories;
     return dashboard.alerts.filter(
       (item) =>
         !handled[item.alert.id] &&
@@ -62,13 +62,36 @@ function DashboardPage() {
     );
   }, [dashboard, handled, persona]);
 
-  function handleDismiss(alertId, e) {
+  async function handleDismiss(alertId, e) {
     if (e) e.stopPropagation();
     setHandled((current) => ({ ...current, [alertId]: "dismissed" }));
     if (selected?.alert?.id === alertId) {
       setSelected(null);
     }
     showToast("Signal removed from queue");
+    try {
+      await saveDecision(alertId, {
+        decision: "dismissed",
+        persona,
+        feedback: "Dismissed from dashboard queue"
+      });
+    } catch (err) {
+      // Background persistence error silent log
+    }
+  }
+
+  async function handleResetDemo() {
+    setBusy(true);
+    try {
+      await resetDemo();
+      setHandled({});
+      await loadDashboard();
+      showToast("Demo queue restored with initial signals");
+    } catch (err) {
+      setError("Failed to reset demo queue: " + err.message);
+    } finally {
+      setBusy(false);
+    }
   }
 
   function showToast(msg) {
@@ -108,6 +131,9 @@ function DashboardPage() {
             <option>Category Manager</option>
             <option>CXO</option>
           </select>
+          <button className="icon-button" title="Reset Demo Queue" onClick={handleResetDemo}>
+            <RotateCcw size={17} />
+          </button>
           <button className="icon-button" title="Refresh dashboard" onClick={loadDashboard}>
             <RefreshCw size={17} className={busy ? "spin" : ""} />
           </button>
@@ -117,7 +143,7 @@ function DashboardPage() {
       <main>
         <section className="intro">
           <div>
-            <p className="eyebrow">{PERSONAS[persona].scope}</p>
+            <p className="eyebrow">{PERSONAS[persona]?.scope}</p>
             <h1>Find the reason behind the signal.</h1>
             <p className="lede">
               An enterprise decision workspace for retail anomalies, grounded in operational
@@ -130,10 +156,17 @@ function DashboardPage() {
           </div>
         </section>
 
+        {/* STATE 3: API/DATA FAILURE STATE */}
         {error && (
-          <div className="error">
-            <CircleAlert size={17} />
-            {error}
+          <div className="error-container margin-bottom-md">
+            <CircleAlert size={20} color="#e53e3e" />
+            <div className="error-text">
+              <strong>Unable to load telemetry signals</strong>
+              <p>{error}</p>
+            </div>
+            <button className="secondary-button margin-top-sm" onClick={loadDashboard}>
+              Retry Loading
+            </button>
           </div>
         )}
 
@@ -172,16 +205,24 @@ function DashboardPage() {
           </div>
           <span className="queue-note">Ranked by financial impact</span>
         </section>
+
         <section className="queue">
-          {!dashboard ? (
+          {busy && !dashboard ? (
             <div className="loading">Loading telemetry...</div>
+          ) : error ? (
+            null
           ) : visibleAlerts.length === 0 ? (
-            <div className="empty">
-              <Check size={25} />
-              <h3>All clear</h3>
-              <p>There are no unresolved signals in this scope.</p>
+            /* STATE 2: ALL ALERTS HAVE BEEN HANDLED STATE */
+            <div className="empty-state-box">
+              <Check size={32} color="#38a169" />
+              <h3>You're all caught up</h3>
+              <p>All active signals in your current scope have been reviewed and handled.</p>
+              <button className="secondary-button margin-top-sm" onClick={handleResetDemo}>
+                <RotateCcw size={15} /> Reset Demo Queue
+              </button>
             </div>
           ) : (
+            /* STATE 1: ACTIVE ALERTS EXIST STATE */
             visibleAlerts.map((item) => (
               <AlertCard
                 key={item.alert.id}
@@ -290,7 +331,6 @@ function InvestigateModal({ item, onClose, onDiagnose, onRemove }) {
           </button>
         </div>
 
-        {/* Section 7 Requirement: Horizontal 3-column equal Grid for Baseline, Current, Variance */}
         <div className="horizontal-kpi-summary">
           <div className="summary-box">
             <small>BASELINE</small>

@@ -220,6 +220,36 @@ main { max-width: 1240px; margin: auto; padding: 40px clamp(20px, 4vw, 64px) 60p
 
 .queue { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
 
+/* Empty & Error State Cards (Section 7) */
+.empty-state-box {
+  grid-column: 1 / -1;
+  background: #ffffff;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 40px 24px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.empty-state-box h3 { margin: 8px 0 2px; font-family: 'Space Grotesk', sans-serif; font-size: 20px; font-weight: 700; }
+.empty-state-box p { margin: 0 0 14px; color: var(--text-light); font-size: 14px; }
+
+.error-container {
+  background: var(--red-bad-bg);
+  border: 1.5px solid var(--red-bad);
+  border-radius: 10px;
+  padding: 16px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.error-text strong { display: block; color: var(--red-bad); font-size: 14px; font-weight: 700; margin-bottom: 2px; }
+.error-text p { margin: 0; color: var(--text-dark); font-size: 13px; }
+
 /* Alert Card — Section 3 & 4 (Signal First, NO Severity Badges) */
 .alert-card {
   padding: 22px;

@@ -14,6 +14,14 @@ def main() -> None:
     sales.to_csv("cause/data/sales_daily.csv", index=False)
     build_inventory(sales).to_csv("cause/data/inventory_daily.csv", index=False)
     build_change_log().to_csv("cause/data/change_log.csv", index=False)
+    
+    # Safely clear decision runtime history for clean demo queue
+    decisions_path = Path("cause/data/decisions.csv")
+    if decisions_path.exists():
+        try:
+            decisions_path.unlink()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

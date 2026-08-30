@@ -26,3 +26,5 @@ export const saveDecision = (id, body) =>
     method: "POST",
     body: JSON.stringify(body),
   });
+export const resetDemo = () =>
+  request("/api/v1/reset-demo", { method: "POST" });
