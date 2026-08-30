@@ -283,7 +283,7 @@ def detect(sales_wk, camp_wk, inv_df=None, sales_daily_df=None):
                 "delta_fmt": f"{int(delta):+,} units ({fmt_inr(delta_inr)})",
             })
 
-    # --- KPI 4: Average Realized Price by category x region ---
+    # --- KPI 4: Average Realized Price by category x region (and product-level for specific promos) ---
     for _, r in cells.iterrows():
         s = sales_wk[(sales_wk.category == r.category) &
                      (sales_wk.region == r.region)].sort_values("week_start").copy()
@@ -323,6 +323,55 @@ def detect(sales_wk, camp_wk, inv_df=None, sales_daily_df=None):
                 "baseline_fmt": f"\u20b9{base:,.2f}/unit",
                 "delta_fmt": f"\u20b9{delta:+,.2f}/unit ({fmt_inr(delta_inr)})",
             })
+
+    if sales_daily_df is not None and not sales_daily_df.empty:
+        s_daily = sales_daily_df.copy()
+        s_daily["week_start"] = s_daily["date"] - pd.to_timedelta(s_daily["date"].dt.dayofweek, unit="D")
+        p_weekly = s_daily.groupby(["product_id", "product_name", "category", "region", "week_start"], as_index=False).agg({
+            "units_sold": "sum",
+            "revenue": "sum"
+        })
+        p_weekly["price"] = p_weekly["revenue"] / p_weekly["units_sold"].replace(0, 1)
+
+        for (pid, pname, cat, reg), grp in p_weekly.groupby(["product_id", "product_name", "category", "region"]):
+            grp = grp.sort_values("week_start")
+            hist = grp[grp.week_start < cur_week].tail(4)
+            cur_row = grp[grp.week_start == cur_week]
+            if cur_row.empty or hist.empty:
+                continue
+            cur_p = float(cur_row.price.iloc[0])
+            base_p = float(hist.price.mean())
+            std_p = float(hist.price.std(ddof=1)) if len(hist) >= 2 else 0.0
+            delta_p = cur_p - base_p
+            pct_p = delta_p / base_p if base_p else None
+            z_p = (cur_p - base_p) / std_p if std_p else None
+
+            if z_p is not None and abs(z_p) >= Z_THRESHOLD and pct_p is not None and abs(pct_p) >= PRICE_MOVE_MIN:
+                already = any(a["kpi"] == "Average Realized Price" and a["category"] == cat and a["region"] == reg for a in alerts)
+                if not already:
+                    units_now = float(cur_row.units_sold.iloc[0])
+                    delta_inr = delta_p * units_now
+                    series = [
+                        {
+                            "week": str(row.week_start.date()),
+                            "value": float(row.price),
+                            "expected": base_p
+                        }
+                        for _, row in grp.tail(8).iterrows()
+                    ]
+                    alerts.append({
+                        "kpi": "Average Realized Price", "category": cat, "region": reg,
+                        "week_start": cur_week,
+                        "current": cur_p, "baseline_mean": base_p, "baseline_std": std_p,
+                        "baseline_weeks": int(len(hist)),
+                        "delta_inr": delta_inr, "pct_change": pct_p, "z_score": z_p,
+                        "direction": "down" if delta_p < 0 else "up",
+                        "low_data": len(hist) < MIN_BASELINE_WEEKS,
+                        "historical_series": series,
+                        "current_fmt": f"\u20b9{cur_p:,.2f}/unit ({pname})",
+                        "baseline_fmt": f"\u20b9{base_p:,.2f}/unit",
+                        "delta_fmt": f"\u20b9{delta_p:+,.2f}/unit ({fmt_inr(delta_inr)})",
+                    })
 
     # --- KPI 5: Stockout Incident Days by category x region ---
     if inv_df is not None and not inv_df.empty and sales_daily_df is not None:
@@ -373,7 +422,6 @@ def detect(sales_wk, camp_wk, inv_df=None, sales_daily_df=None):
                 })
 
     # --- Scenario ID Assignment (A1..A5 for Track 3 Canonical Scenarios) ---
-    # Assign stable IDs A1..A5 so scenario test assertions can resolve specific alerts by ID.
     canonical_specs = {
         "A1": ("Revenue", "Electronics", "Region X"),
         "A2": ("Revenue", "Electronics", "Region Y"),
@@ -395,8 +443,6 @@ def detect(sales_wk, camp_wk, inv_df=None, sales_daily_df=None):
             a["id"] = f"A{next_num}"
             next_num += 1
 
-    # --- COMPLETE ALERT POOL SEVERITY SORTING ---
-    # Do NOT force canonical_alerts to be first 5 positions in the array.
     # Sort the complete alert pool by absolute rupee impact (or severity) so the dashboard
     # receives a natural, unsuppressed alert pool across all 5 KPI families.
     alerts.sort(key=lambda a: abs(a["delta_inr"]), reverse=True)

@@ -7,8 +7,8 @@ import InvestigationDetailPage from "./pages/InvestigationDetailPage.jsx";
 import KPIChart from "./components/KPIChart.jsx";
 
 const PERSONAS = {
-  "Category Manager": { label: "Category Manager", scope: "Electronics + Apparel & Home", categories: ["Electronics", "Apparel", "Home & Kitchen"] },
-  CXO: { label: "CXO Suite", scope: "Enterprise portfolio", categories: null },
+  "Category Manager": { label: "Category Manager", scope: "Commercial & Operational Execution", categories: null },
+  CXO: { label: "CXO Suite", scope: "Enterprise Strategic Portfolio", categories: null },
 };
 
 function formatImpact(value) {
@@ -54,13 +54,8 @@ function DashboardPage() {
 
   const visibleAlerts = useMemo(() => {
     if (!dashboard || !dashboard.alerts) return [];
-    const categories = PERSONAS[persona]?.categories;
-    return dashboard.alerts.filter(
-      (item) =>
-        !handled[item.alert.id] &&
-        (!categories || categories.includes(item.alert.category))
-    );
-  }, [dashboard, handled, persona]);
+    return dashboard.alerts.filter((item) => !handled[item.alert.id]);
+  }, [dashboard, handled]);
 
   async function handleDismiss(alertId, e) {
     if (e) e.stopPropagation();
@@ -229,6 +224,7 @@ function DashboardPage() {
               <AlertCard
                 key={item.alert.id}
                 item={item}
+                persona={persona}
                 onOpen={() => openAlert(item)}
                 onRemove={(e) => handleDismiss(item.alert.id, e)}
               />
@@ -240,6 +236,7 @@ function DashboardPage() {
       {selected && (
         <InvestigateModal
           item={selected}
+          persona={persona}
           onClose={() => setSelected(null)}
           onDiagnose={startDiagnosis}
           onRemove={() => handleDismiss(selected.alert.id)}
@@ -259,38 +256,76 @@ function Metric({ label, value, caption, accent }) {
   );
 }
 
-function AlertCard({ item, onOpen, onRemove }) {
+function AlertCard({ item, persona, onOpen, onRemove }) {
   const { alert } = item;
   const change = alert.pct_change == null ? "New signal" : `${alert.pct_change >= 0 ? "+" : ""}${(alert.pct_change * 100).toFixed(1)}%`;
+  const isCXO = persona === "CXO";
+
+  const cxoTitle = {
+    "Revenue": "Revenue Contraction Risk",
+    "Marketing Spend": "Marketing Spend Realignment",
+    "Units Sold": "Sales Volume Deviation",
+    "Average Realized Price": "Price Realization Deflation",
+    "Stockout Incident Days": "Inventory Stockout Risk",
+  }[alert.kpi] || `${alert.kpi} Risk`;
 
   return (
-    <article className="alert-card">
+    <article className={`alert-card ${isCXO ? "cxo-framed-card" : "cm-framed-card"}`}>
       <div className="card-top">
         <span className={`route ${item.route.toLowerCase()}`}>
           {routeLabel(item.route)}
         </span>
-        <span className="kpi-tag">{alert.kpi}</span>
+        <span className="kpi-tag">{isCXO ? "Executive Signal" : alert.kpi}</span>
       </div>
-      <h3>{alert.kpi}</h3>
-      <p className="context">
-        {alert.category} <span>/</span> {alert.region} · Week {alert.week_start}
-      </p>
-      <div className="card-stats">
-        <div>
-          <small>Baseline</small>
-          <strong>{alert.baseline_fmt || `₹${(alert.baseline_mean||0).toLocaleString("en-IN")}`}</strong>
-        </div>
-        <div>
-          <small>Current</small>
-          <strong>{alert.current_fmt || `₹${(alert.current||0).toLocaleString("en-IN")}`}</strong>
-        </div>
-        <div className="impact">
-          <small>Variance</small>
-          <strong className={alert.delta_inr < 0 ? "negative" : "positive"}>
-            {change}
-          </strong>
-        </div>
-      </div>
+
+      {isCXO ? (
+        <>
+          <h3>{cxoTitle}</h3>
+          <p className="context">
+            {alert.category} Portfolio · {alert.region === "(all)" ? "Enterprise Wide" : alert.region}
+          </p>
+          <div className="card-stats cxo-stats">
+            <div>
+              <small>Financial Impact</small>
+              <strong className={alert.delta_inr < 0 ? "negative" : "positive"}>
+                {formatImpact(alert.delta_inr)}
+              </strong>
+            </div>
+            <div>
+              <small>Materiality</small>
+              <strong>{alert.pct_fmt || change}</strong>
+            </div>
+            <div className="impact">
+              <small>Observed Window</small>
+              <strong className="muted-text">Week {alert.week_start}</strong>
+            </div>
+          </div>
+        </>
+      ) : (
+        <>
+          <h3>{alert.kpi} Anomaly</h3>
+          <p className="context">
+            {alert.category} <span>/</span> {alert.region} · Week {alert.week_start}
+          </p>
+          <div className="card-stats cm-stats">
+            <div>
+              <small>Baseline</small>
+              <strong>{alert.baseline_fmt || `₹${(alert.baseline_mean||0).toLocaleString("en-IN")}`}</strong>
+            </div>
+            <div>
+              <small>Current</small>
+              <strong>{alert.current_fmt || `₹${(alert.current||0).toLocaleString("en-IN")}`}</strong>
+            </div>
+            <div className="impact">
+              <small>Operational Variance</small>
+              <strong className={alert.delta_inr < 0 ? "negative" : "positive"}>
+                {change}
+              </strong>
+            </div>
+          </div>
+        </>
+      )}
+
       <div className="card-actions-row">
         <button className="secondary-button remove-btn" onClick={onRemove}>
           Remove
@@ -303,8 +338,9 @@ function AlertCard({ item, onOpen, onRemove }) {
   );
 }
 
-function InvestigateModal({ item, onClose, onDiagnose, onRemove }) {
+function InvestigateModal({ item, persona, onClose, onDiagnose, onRemove }) {
   const { alert } = item;
+  const isCXO = persona === "CXO";
 
   useEffect(() => {
     function handleKeyDown(e) {
@@ -322,8 +358,8 @@ function InvestigateModal({ item, onClose, onDiagnose, onRemove }) {
       <div className="investigate-modal-box">
         <div className="modal-header-row">
           <div>
-            <span className="modal-snapshot-label">INVESTIGATION PREVIEW · {alert.id}</span>
-            <h2>{alert.kpi} Anomaly</h2>
+            <span className="modal-snapshot-label">INVESTIGATION PREVIEW · {alert.id} ({persona} Lens)</span>
+            <h2>{isCXO ? `${alert.kpi} Executive Signal` : `${alert.kpi} Operational Anomaly`}</h2>
             <p className="modal-subtitle-text">
               {alert.category} · {alert.region} · Week {alert.week_start}
             </p>
