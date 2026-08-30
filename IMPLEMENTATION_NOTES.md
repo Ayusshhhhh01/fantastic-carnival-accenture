@@ -15,13 +15,19 @@ INVESTIGATION PREVIEW MODAL
         ↓
 DIAGNOSE
         ↓
-FULL-SCREEN INVESTIGATION
+DEDICATED TRIAGE SCREEN
         ↓
 FAST PATH OR DEEP PATH
         ↓
-ROOT CAUSE / EVIDENCE / RECOMMENDATION
+RCA RESULTS (4 COMPETING CAUSES - ALL COLLAPSED)
         ↓
-APPROVE / REJECT / IGNORE
+USER CHOOSES EXPAND CAUSE DETAILS
+        ↓
+RCA DETAIL (EVIDENCE / KPI / CONFIDENCE / CONFLICT)
+        ↓
+RECOMMENDATION (ACTION DIRECTIVE / EXPECTED IMPACT / MATRIX / LLM NARRATION)
+        ↓
+APPROVE / REJECT
         ↓
 RETURN TO DASHBOARD
         ↓
@@ -52,18 +58,22 @@ APPROVED ALERT DISAPPEARS FROM ACTIVE QUEUE
   - Telemetry Trend Preview (`KPIChart`) relying strictly on backend `historical_series`. Shows `"Historical telemetry unavailable"` if telemetry is pending (no fake frontend trend generation).
   - Clear **"Diagnose"** CTA button to launch full-screen investigation, alongside **"Remove Signal"** and close controls (Esc key supported).
 
-### 4. Full-Screen Investigation (`/investigate/:alertId`)
+### 4. Dedicated Triage & Investigation Flow (`/investigate/:alertId`)
 - **Automated Triage Scan**:
   - **Path 1 (Direct Event Match)**: Scans operational change logs for pricing/promo/inventory/IT events. If match found $\rightarrow$ Fast Path.
   - **Path 2 (Deep Causal Research)**: Retrieves multi-source telemetry evidence $\rightarrow$ evaluates 4 canonical hypotheses $\rightarrow$ scores Weighted Evidence Confidence $\rightarrow$ checks cross-regional contradiction.
 - **Fast Path UI**:
   - Verified event details (Type, Date, Description, Category/Region match).
-  - Recommended action directive, monitoring plan, and evidence citations. Skips candidate hypotheses.
+  - Recommended action directive, monitoring plan, and evidence citations.
 - **Deep Path UI (Resolved)**:
-  - Primary Root Cause spotlight (leading candidate at verified confidence score).
-  - Supporting & contrary reasoning breakdown.
-  - **4 Canonical Hypotheses** (Supply-side stock-out, Demand-side campaign shift, Pricing change, Operational disruption).
-  - **Collapsed by default**: All hypothesis cards start collapsed; user explicitly clicks `"Expand"` to inspect verdict and detailed breakdown.
+  - Evaluates **exactly 4 canonical competing causes**:
+    1. Supply-side stock-out
+    2. Demand-side campaign/demand shift
+    3. Pricing change
+    4. Operational / channel disruption
+  - **All cards collapsed initially**: `selectedCauseIndex` starts as `null`. No pre-emptive root-cause answer is shown before user interaction.
+  - User explicitly clicks `"Expand Cause Details"` to inspect RCA Detail (Evidence Provenance, Real KPI Snapshot, Weighted Evidence Confidence, Conflict Audit).
+  - **Single Top-Only Navigation**: `[← Back to RCA List]` control positioned exclusively at the top of detail screens.
 - **Conflict Path UI (Unresolved Conflict)**:
   - Displays `"Conflicting evidence"` and signal contradiction details (Signal A vs Signal B).
   - Withholds automated diagnosis and explicitly directs manual audit.
@@ -72,29 +82,29 @@ APPROVED ALERT DISAPPEARS FROM ACTIVE QUEUE
   - Withholds recommendation. ZERO LLM calls made.
 
 ### 5. Recommendation & AI Executive Summary
-- Grounded in deterministic Causal Engine: Driver, Lever, Action (strongest visual element), Estimated Impact, Owner, Confidence, Monitoring Plan.
+- Grounded in deterministic Causal Engine: Driver, Lever, Action (strongest visual element), Expected Impact, Owner, Confidence, Monitoring Plan.
 - **AI Summary**: Clean narrative brief with trust indicator (`LLM · Narration only`) and expandable technical insight breakdown.
 
 ### 6. Evidence & Trust / Audit Ledger
 - **Title**: `"EVIDENCE & TRUST"`
-- Multi-Source Evidence Retrieval summary (4 telemetry sources checked, Evidence verified, Deterministic analysis).
-- Expandable `"View technical audit"` detailed ledger (Step, Engine, Latency, Cost, LLM usage, Provenance notes).
+- Multi-source evidence retrieval summary across 4 empirical telemetry sources (POS, CRM, ERP, Change Log).
+- Technical Audit table with latency, cost, and provenance notes.
 
 ### 7. Decision Persistence & Active Queue Removal
-- Actions: `[ Approve & Execute ]`, `[ Reject Action ]`, `[ Ignore Signal ]`.
+- Actions: `[ Approve & Execute ]`, `[ Reject Action ]`.
 - If `Reject`: Reason selector (`Wrong cause`, `Missing evidence`, `Wrong impact`, `Wrong recommendation`, `Other`).
-- **Approve Action**: Persists decision to backend `decisions.csv`, marks alert as handled in frontend state, shows `"Decision recorded"` confirmation, and IMMEDIATELY removes alert from active dashboard queue.
+- **Approve Action**: Persists decision to backend `decisions.csv` (with hypothesis-specific calibration tag), navigates immediately to dashboard, and removes alert from active dashboard queue.
 
 ---
 
 ## 🧪 Verification Commands
 
 ```bash
-# Run Python backend unit & integration tests (16 tests)
-pytest backend/tests
+# Run Python backend unit & integration tests + scenario test
+python -m pytest backend/tests scenario_test.py -q
 
-# Run full scenario validation script
-python scenario_test.py
+# Compile backend
+python -m compileall -q backend cause scripts
 
 # Build frontend production bundle
 cd frontend && npm run build && cd ..

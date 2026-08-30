@@ -250,31 +250,60 @@ def detect(sales_wk, camp_wk):
     return alerts, cur_week
 
 
-# ------------------------------------------------------- Step 3: fast path --
+# ------------------------------------------------------- Step 3: Fast Path --
 def fast_path_check(alert, changelog):
+    """
+    Scans change log for direct operational event matches.
+    Supports regional alerts (matching exact region) and aggregate "(all)" alerts (matching category across all regions).
+    """
     t0 = time.perf_counter()
     ws, we = alert["week_start"], alert["week_start"] + pd.Timedelta(days=6)
+    
+    # Mandatory Category and Date Window (+/- 2 days)
     hits = changelog[
         (changelog.date >= ws - pd.Timedelta(days=2)) &
         (changelog.date <= we + pd.Timedelta(days=2)) &
-        (changelog.category == alert["category"]) &
-        (changelog.region == alert["region"])]
+        (changelog.category == alert["category"])
+    ].copy()
+
+    # Regional alerts require exact region match; aggregate "(all)" alerts search all regions
+    if alert.get("region") != "(all)":
+        hits = hits[hits.region == alert["region"]]
+
     result = None
     if len(hits):
+        # Deterministic Ranking:
+        # 1. Temporal closeness to window start
+        hits["dist"] = (hits["date"] - ws).abs()
+
+        # 2. Event type priority (Operational / IT / Price / Campaign)
+        priority_map = {
+            "it_incident": 0,
+            "operational": 1,
+            "price_change": 2,
+            "campaign": 3,
+            "stock_out": 4
+        }
+        hits["priority"] = hits["event_type"].map(lambda et: priority_map.get(str(et).lower(), 5))
+
+        # 3. Stable tie-breaker
+        hits = hits.sort_values(by=["dist", "priority", "date"])
         h = hits.iloc[0]
+
         result = {
             "matched": True,
             "event_date": str(h["date"].date()),
             "event_type": h["event_type"],
             "description": h["description"],
             "window": f"[{ws.date()} .. {we.date()}] +/- 2 days",
+            "region": str(h["region"])
         }
     return result, t0
 
 
-# ---------------------------------------------- Step 3.5: RAG Evidence Retriever ----
+# ---------------------------------------------- Step 3.5: Telemetry Evidence Retriever ----
 class TelemetryRetriever:
-    """In-memory multi-source RAG retriever over POS sales, campaigns, inventory, and change log."""
+    """In-memory multi-source evidence retriever over POS sales, campaigns, inventory, and change log."""
 
     def __init__(self, sales, camps, inv, changelog):
         self.sales = sales
@@ -385,27 +414,61 @@ class TelemetryRetriever:
 
 # ---------------------------------------------- Step 3.6: Feedback Calibrator ----
 class EmpiricalFeedbackCalibrator:
-    """Calibrates hypothesis prior weights based on persisted analyst approvals/rejections."""
+    """Calibrates hypothesis prior weights based on persisted analyst approvals/rejections for specific hypothesis types."""
 
     def __init__(self, decisions_path: Path = DATA / "decisions.csv"):
         self.decisions_path = decisions_path
 
     def get_calibration_factor(self, hypothesis_type: str, category: str) -> float:
-        """Returns empirical multiplier [0.85 .. 1.0] based on historical human reviews."""
+        """
+        Returns hypothesis-specific empirical multiplier [0.90 .. 1.05]
+        based on historical human reviews for the relevant hypothesis_type and category.
+        """
         if not self.decisions_path.exists():
             return 1.0
         try:
             df = pd.read_csv(self.decisions_path)
             if df.empty or "decision" not in df.columns:
                 return 1.0
-            cat_df = df[df.get("category", "") == category] if "category" in df.columns else df
-            if cat_df.empty:
+
+            # 1. Filter by category (if category column exists)
+            if "category" in df.columns and category:
+                df_cat = df[df["category"] == category]
+                if not df_cat.empty:
+                    df = df_cat
+
+            # 2. Filter by hypothesis_type (if hypothesis_type column exists)
+            kind_clean = str(hypothesis_type).split("-")[0].split(" ")[0].strip()
+            if "hypothesis_type" in df.columns:
+                df_hyp = df[df["hypothesis_type"].fillna("").astype(str).str.contains(kind_clean, case=False, regex=False)]
+                if not df_hyp.empty:
+                    df = df_hyp
+
+            if df.empty:
                 return 1.0
-            n_rejected = (cat_df["decision"] == "rejected").sum()
-            n_total = len(cat_df)
-            if n_total >= 3 and (n_rejected / n_total) > 0.5:
+
+            # 3. Decision string normalization
+            dec_norm = df["decision"].astype(str).str.strip().str.lower()
+            approved_mask = dec_norm.isin(["approved", "approve"])
+            rejected_mask = dec_norm.isin(["rejected", "reject"])
+
+            n_approved = approved_mask.sum()
+            n_rejected = rejected_mask.sum()
+            n_total = n_approved + n_rejected
+
+            if n_total < 3:
+                return 1.0
+
+            approval_rate = n_approved / n_total
+
+            if approval_rate >= 0.75:
+                return 1.05
+            elif approval_rate >= 0.50:
+                return 1.00
+            elif approval_rate >= 0.25:
+                return 0.95
+            else:
                 return 0.90
-            return 1.0
         except Exception:
             return 1.0
 
@@ -690,11 +753,15 @@ def attach_hypothesis_confidence(hyps, comps, calibrator=None, category=""):
             "hypothesis_margin": round(margin, 3),
             "data_completeness": comps["data_completeness"],
         }
-        pct = sum(w[k] * f[k] for k in w)
+        raw_pct = sum(w[k] * f[k] for k in w)
         if calibrator:
             calib = calibrator.get_calibration_factor(kind, category)
-            pct = pct * calib
-        h["confidence_pct"] = round(pct * 100)
+            pct = raw_pct * calib
+        else:
+            pct = raw_pct
+        # Clamp confidence to [0.0, 1.0] (0 to 100%)
+        clamped_pct = max(0.0, min(1.0, pct))
+        h["confidence_pct"] = round(clamped_pct * 100)
         h["weights"] = w
         h["factors"] = f
 
@@ -775,7 +842,12 @@ def conflict_check(alert, sales_wk, inv, sales, winner, camps_wk=None):
             "conflict": False,
             "comparable_cells": [],
             "note": "Aggregate KPI - cross-region exposure comparison not applicable.",
-            "escalation_directive": None
+            "escalation_directive": None,
+            "signal_a": None,
+            "signal_b": None,
+            "source_a": "sales_daily.csv",
+            "source_b": "inventory_daily.csv",
+            "reason": None
         }
     wk = alert["week_start"]
     we = wk + pd.Timedelta(days=6)
@@ -834,23 +906,43 @@ def conflict_check(alert, sales_wk, inv, sales, winner, camps_wk=None):
                          f"{s['campaign_spend_change_pct']:+.1f}% - "
                          f"the divergence is explained, so the winning "
                          f"hypothesis stands."),
-                "escalation_directive": None
+                "escalation_directive": None,
+                "signal_a": None,
+                "signal_b": None,
+                "source_a": "sales_daily.csv",
+                "source_b": "campaigns_weekly.csv",
+                "reason": None
             }
+        sig_a = (f"{alert['category']}/{alert['region']}: stock-out "
+                 f"exposure coincided with {alert['pct_fmt']} "
+                 f"revenue ({alert['delta_fmt']})")
+        sig_b = (f"{alert['category']}/{s['region']}: similar "
+                 f"stock-out ({s['stockout_days']} days, product "
+                 f"{s['product_id']}) yet revenue moved "
+                 f"{s['revenue_pct_change']:+.1f}% with no "
+                 f"quantified offsetting factor")
+        reason_str = "Cross-region counterfactual contradiction: identical inventory stock-out did not cause revenue contraction in sibling region."
         return {
             "conflict": True,
-            "signal_a": (f"{alert['category']}/{alert['region']}: stock-out "
-                         f"exposure coincided with {alert['pct_fmt']} "
-                         f"revenue ({alert['delta_fmt']})"),
-            "signal_b": (f"{alert['category']}/{s['region']}: similar "
-                         f"stock-out ({s['stockout_days']} days, product "
-                         f"{s['product_id']}) yet revenue moved "
-                         f"{s['revenue_pct_change']:+.1f}% with no "
-                         f"quantified offsetting factor"),
-            "conflict_explanation": "Cross-region counterfactual contradiction: identical inventory stock-out did not cause revenue contraction in sibling region.",
+            "signal_a": sig_a,
+            "signal_b": sig_b,
+            "source_a": "sales_daily.csv / inventory_daily.csv",
+            "source_b": "sales_daily.csv / inventory_daily.csv",
+            "reason": reason_str,
+            "conflict_explanation": reason_str,
             "comparable_cells": siblings,
             "escalation_directive": "Escalate for manual commercial audit — do not automate operational changes."
         }
-    return {"conflict": False, "comparable_cells": siblings, "escalation_directive": None}
+    return {
+        "conflict": False,
+        "comparable_cells": siblings,
+        "escalation_directive": None,
+        "signal_a": None,
+        "signal_b": None,
+        "source_a": "sales_daily.csv",
+        "source_b": "inventory_daily.csv",
+        "reason": None
+    }
 
 
 # ------------------------------------------- Step 7: access gate (CXO) ----

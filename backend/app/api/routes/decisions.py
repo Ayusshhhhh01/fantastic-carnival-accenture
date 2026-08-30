@@ -15,7 +15,13 @@ def decision(
 ) -> DecisionResponse:
     try:
         return DecisionResponse.model_validate(
-            service.record(alert_id, request.decision, request.persona, request.feedback)
+            service.record(
+                alert_id,
+                request.decision,
+                request.persona,
+                request.feedback,
+                request.hypothesis_type
+            )
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"Alert {alert_id} not found") from exc
