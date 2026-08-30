@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { BrowserRouter as Router, Routes, Route, useNavigate } from "react-router-dom";
-import { Activity, ArrowUpRight, Check, ChevronRight, CircleAlert, RefreshCw, X } from "lucide-react";
-import { getDashboard, getNarrative, investigateAlert, saveDecision } from "./api/index.js";
+import { Activity, ArrowUpRight, Check, CircleAlert, RefreshCw, X } from "lucide-react";
+import { getDashboard } from "./api/index.js";
 import LoginPage from "./pages/LoginPage.jsx";
 import InvestigationDetailPage from "./pages/InvestigationDetailPage.jsx";
+import KPIChart from "./components/KPIChart.jsx";
 
 const PERSONAS = {
   "Category Manager": { label: "Category Manager", scope: "Electronics + Apparel & Home", categories: ["Electronics", "Apparel", "Home & Kitchen"] },
@@ -30,10 +31,10 @@ function DashboardPage() {
   const [persona, setPersona] = useState(initialPersona);
   const [dashboard, setDashboard] = useState(null);
   const [selected, setSelected] = useState(null);
-  const [narrative, setNarrative] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [handled, setHandled] = useState({});
+  const [toastMessage, setToastMessage] = useState("");
 
   async function loadDashboard() {
     setBusy(true);
@@ -67,6 +68,12 @@ function DashboardPage() {
     if (selected?.alert?.id === alertId) {
       setSelected(null);
     }
+    showToast("Signal removed from queue");
+  }
+
+  function showToast(msg) {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(""), 3000);
   }
 
   async function openAlert(item) {
@@ -95,7 +102,7 @@ function DashboardPage() {
         </div>
         <div className="top-actions">
           <span className="status">
-            <Activity size={15} /> Live telemetry
+            <Activity size={15} /> Telemetry connected
           </span>
           <select value={persona} onChange={(event) => setPersona(event.target.value)}>
             <option>Category Manager</option>
@@ -129,6 +136,14 @@ function DashboardPage() {
             {error}
           </div>
         )}
+
+        {toastMessage && (
+          <div className="toast-notification">
+            <Check size={16} />
+            {toastMessage}
+          </div>
+        )}
+
         <section className="metrics">
           <Metric
             label="Active signals"
@@ -211,9 +226,7 @@ function AlertCard({ item, onOpen, onRemove }) {
         <span className={`route ${item.route.toLowerCase()}`}>
           {routeLabel(item.route)}
         </span>
-        <span className="severity-tag" style={{ fontSize: '0.75rem', fontWeight: 600, color: '#e53e3e', background: '#fff5f5', padding: '2px 8px', borderRadius: '4px' }}>
-          HIGH
-        </span>
+        <span className="kpi-tag">{alert.kpi}</span>
       </div>
       <h3>{alert.kpi}</h3>
       <p className="context">
@@ -221,25 +234,25 @@ function AlertCard({ item, onOpen, onRemove }) {
       </p>
       <div className="card-stats">
         <div>
-          <small>Current / Baseline</small>
-          <strong>{alert.current_fmt || `₹${(alert.current||0).toLocaleString("en-IN")}`} / {alert.baseline_fmt || `₹${(alert.baseline_mean||0).toLocaleString("en-IN")}`}</strong>
+          <small>Baseline</small>
+          <strong>{alert.baseline_fmt || `₹${(alert.baseline_mean||0).toLocaleString("en-IN")}`}</strong>
         </div>
         <div>
-          <small>Movement</small>
+          <small>Current</small>
+          <strong>{alert.current_fmt || `₹${(alert.current||0).toLocaleString("en-IN")}`}</strong>
+        </div>
+        <div className="impact">
+          <small>Variance</small>
           <strong className={alert.delta_inr < 0 ? "negative" : "positive"}>
             {change}
           </strong>
         </div>
-        <div className="impact">
-          <small>Business Impact</small>
-          <strong>{alert.delta_fmt}</strong>
-        </div>
       </div>
-      <div className="card-actions" style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
-        <button className="secondary-button" style={{ flex: 1, padding: '8px', borderRadius: '6px', fontSize: '0.85rem' }} onClick={onRemove}>
+      <div className="card-actions-row">
+        <button className="secondary-button remove-btn" onClick={onRemove}>
           Remove
         </button>
-        <button className="investigate" style={{ flex: 2 }} onClick={onOpen}>
+        <button className="investigate-btn" onClick={onOpen}>
           Investigate <ArrowUpRight size={16} />
         </button>
       </div>
@@ -247,81 +260,68 @@ function AlertCard({ item, onOpen, onRemove }) {
   );
 }
 
-import KPIChart from "./components/KPIChart.jsx";
-
 function InvestigateModal({ item, onClose, onDiagnose, onRemove }) {
   const { alert } = item;
 
+  useEffect(() => {
+    function handleKeyDown(e) {
+      if (e.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
   return (
     <div
-      className="overlay"
-      style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 1000 }}
+      className="modal-overlay"
       onMouseDown={(e) => e.target === e.currentTarget && onClose()}
     >
-      <div className="investigate-modal" style={{ background: '#fff', borderRadius: '12px', width: '90%', maxWidth: '680px', padding: '24px', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)', maxHeight: '90vh', overflowY: 'auto' }}>
-        <div className="modal-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #eee', paddingBottom: '12px', marginBottom: '16px' }}>
+      <div className="investigate-modal-box">
+        <div className="modal-header-row">
           <div>
-            <span style={{ fontSize: '0.8rem', color: '#718096', fontWeight: 600 }}>ALERT SNAPSHOT · {alert.id}</span>
-            <h2 style={{ margin: '4px 0 0 0', fontSize: '1.4rem' }}>{alert.kpi}</h2>
-            <p style={{ margin: '2px 0 0 0', color: '#4a5568', fontSize: '0.9rem' }}>
+            <span className="modal-snapshot-label">INVESTIGATION PREVIEW · {alert.id}</span>
+            <h2>{alert.kpi} Anomaly</h2>
+            <p className="modal-subtitle-text">
               {alert.category} · {alert.region} · Week {alert.week_start}
             </p>
           </div>
-          <button className="icon-button" onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
-            <X size={20} />
+          <button className="close-modal-btn" onClick={onClose} title="Close preview (Esc)">
+            <X size={18} />
           </button>
         </div>
 
-        <div className="modal-stats-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', background: '#f7fafc', padding: '12px', borderRadius: '8px', marginBottom: '16px' }}>
-          <div>
-            <small style={{ color: '#718096', fontSize: '0.75rem', display: 'block' }}>Current / Baseline</small>
-            <strong style={{ fontSize: '0.95rem' }}>{alert.current_fmt || `₹${(alert.current||0).toLocaleString("en-IN")}`} / {alert.baseline_fmt || `₹${(alert.baseline_mean||0).toLocaleString("en-IN")}`}</strong>
+        {/* Section 7 Requirement: Horizontal 3-column equal Grid for Baseline, Current, Variance */}
+        <div className="horizontal-kpi-summary">
+          <div className="summary-box">
+            <small>BASELINE</small>
+            <strong>{alert.baseline_fmt || `₹${(alert.baseline_mean||0).toLocaleString("en-IN")}`}</strong>
           </div>
-          <div>
-            <small style={{ color: '#718096', fontSize: '0.75rem', display: 'block' }}>Movement %</small>
-            <strong className={alert.delta_inr < 0 ? "negative" : "positive"} style={{ fontSize: '0.95rem' }}>
-              {alert.pct_fmt || `${((alert.pct_change||0)*100).toFixed(1)}%`}
-            </strong>
+          <div className="summary-box">
+            <small>CURRENT</small>
+            <strong>{alert.current_fmt || `₹${(alert.current||0).toLocaleString("en-IN")}`}</strong>
           </div>
-          <div>
-            <small style={{ color: '#718096', fontSize: '0.75rem', display: 'block' }}>Business Impact</small>
-            <strong className={alert.delta_inr < 0 ? "negative" : "positive"} style={{ fontSize: '0.95rem' }}>
-              {alert.delta_fmt}
+          <div className="summary-box">
+            <small>VARIANCE</small>
+            <strong className={alert.delta_inr < 0 ? "negative" : "positive"}>
+              {alert.pct_fmt || `${((alert.pct_change||0)*100).toFixed(1)}%`} ({alert.delta_fmt})
             </strong>
           </div>
         </div>
 
-        <div className="modal-chart-box" style={{ marginBottom: '20px' }}>
-          <h4 style={{ margin: '0 0 8px 0', fontSize: '0.9rem', color: '#4a5568' }}>Real Telemetry Historical Trend</h4>
+        <div className="modal-chart-preview">
+          <h4>Telemetry Trend Preview</h4>
           <KPIChart alert={alert} />
         </div>
 
-        <div className="modal-actions" style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', borderTop: '1px solid #eee', paddingTop: '16px' }}>
-          <button
-            className="secondary-button"
-            onClick={onRemove}
-            style={{ padding: '10px 20px', borderRadius: '6px', cursor: 'pointer', border: '1px solid #cbd5e0', background: '#fff' }}
-          >
-            Remove
+        <div className="modal-actions-footer">
+          <button className="secondary-button" onClick={onRemove}>
+            Remove Signal
           </button>
-          <button
-            className="primary-button"
-            onClick={onDiagnose}
-            style={{ padding: '10px 28px', borderRadius: '6px', cursor: 'pointer', background: '#3182ce', color: '#fff', fontWeight: 'bold', border: 'none' }}
-          >
-            Diagnose
+          <button className="primary-button diagnose-cta" onClick={onDiagnose}>
+            Diagnose <ArrowUpRight size={16} />
           </button>
         </div>
       </div>
-    </div>
-  );
-}
-
-function Evidence({ label, value }) {
-  return (
-    <div>
-      <small>{label}</small>
-      <strong>{value}</strong>
     </div>
   );
 }

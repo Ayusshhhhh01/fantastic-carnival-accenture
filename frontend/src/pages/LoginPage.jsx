@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Activity, ArrowRight, User } from "lucide-react";
+import { Activity, ArrowRight } from "lucide-react";
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -11,28 +11,26 @@ export default function LoginPage() {
     {
       id: "Category Manager",
       title: "Category Manager",
-      description: "Electronics, Apparel & Home portfolios",
+      description: "Operational category intelligence",
       icon: "📊",
-      scope: "Manage specific product categories"
+      scope: "Investigate SKU, regional and supply-demand signals."
     },
     {
       id: "CXO",
       title: "CXO Suite",
-      description: "Enterprise-wide portfolio view",
+      description: "Enterprise portfolio intelligence",
       icon: "🏢",
-      scope: "Executive business intelligence"
+      scope: "Monitor portfolio-level impact and strategic risk."
     }
   ];
 
-  const handleContinue = async () => {
+  const handleContinue = () => {
     if (!selectedPersona) return;
-    
     setLoading(true);
-    // Simulate a brief loading state for UX
     setTimeout(() => {
       navigate(`/dashboard?persona=${encodeURIComponent(selectedPersona)}`);
       setLoading(false);
-    }, 300);
+    }, 200);
   };
 
   return (
@@ -45,55 +43,57 @@ export default function LoginPage() {
           <small>CAUSAL INTELLIGENCE</small>
         </div>
         <div className="status-badge">
-          <Activity size={15} /> Live telemetry
+          <Activity size={15} /> Telemetry connected
         </div>
       </header>
 
       <main className="login-main">
         <div className="login-container">
           <div className="login-header">
-            <h1>Who are you?</h1>
-            <p className="login-subtitle">Select your persona to access tailored causal insights and authorization rules</p>
+            <h1>Select your perspective</h1>
+            <p className="login-subtitle">Choose how you want to investigate business signals.</p>
           </div>
 
           <div className="login-content">
-            <div className="login-section">
-              <h2>Select Your Persona</h2>
-              <p className="login-description">Choose your perspective to access tailored insights</p>
-
-              <div className="personas-grid">
-                {personas.map((persona) => (
+            <div className="personas-grid-horizontal">
+              {personas.map((persona) => {
+                const isSelected = selectedPersona === persona.id;
+                return (
                   <div
                     key={persona.id}
-                    className={`persona-card ${selectedPersona === persona.id ? "active" : ""}`}
+                    role="button"
+                    tabIndex={0}
+                    aria-pressed={isSelected}
+                    className={`persona-card-item ${isSelected ? "active" : ""}`}
                     onClick={() => setSelectedPersona(persona.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setSelectedPersona(persona.id);
+                      }
+                    }}
                   >
-                    <div className="persona-icon">{persona.icon}</div>
+                    <div className="persona-card-header">
+                      <span className="persona-icon-badge">{persona.icon}</span>
+                      {isSelected && <span className="checkmark-badge">✓</span>}
+                    </div>
                     <h3>{persona.title}</h3>
-                    <p className="persona-desc">{persona.description}</p>
-                    <small className="persona-scope">{persona.scope}</small>
-                    {selectedPersona === persona.id && <div className="checkmark">✓</div>}
+                    <p className="persona-desc-text">{persona.description}</p>
+                    <p className="persona-scope-text">{persona.scope}</p>
                   </div>
-                ))}
-              </div>
+                );
+              })}
             </div>
 
-            <div className="login-actions">
+            <div className="login-actions-row">
               <button
-                className="primary-button"
+                className="primary-button continue-btn"
                 onClick={handleContinue}
                 disabled={!selectedPersona || loading}
               >
-                {loading ? "Loading..." : "Continue"}
+                {loading ? "Entering Workspace..." : "Continue"}
                 <ArrowRight size={16} />
               </button>
-            </div>
-
-            <div className="login-footer">
-              <p>
-                <span className="info-icon">ℹ️</span>
-                Your role determines which metrics and recommendations you'll see in the dashboard
-              </p>
             </div>
           </div>
         </div>

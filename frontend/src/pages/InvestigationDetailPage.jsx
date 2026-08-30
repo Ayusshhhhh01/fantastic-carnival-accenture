@@ -1,6 +1,18 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { ArrowLeft, ChevronDown, ChevronUp, AlertCircle, CheckCircle2, ShieldAlert, FileText, Activity, X } from "lucide-react";
+import {
+  ArrowLeft,
+  ChevronDown,
+  ChevronUp,
+  AlertCircle,
+  CheckCircle2,
+  ShieldAlert,
+  Activity,
+  X,
+  Check,
+  HelpCircle,
+  FileText
+} from "lucide-react";
 import { investigateAlert, saveDecision } from "../api/index.js";
 import KPIChart from "../components/KPIChart.jsx";
 
@@ -8,16 +20,23 @@ export default function InvestigationDetailPage() {
   const { alertId } = useParams();
   const navigate = useNavigate();
   const persona = new URLSearchParams(window.location.search).get("persona") || "Category Manager";
-  
+
   const [investigation, setInvestigation] = useState(null);
   const [loading, setLoading] = useState(true);
   const [triageStep, setTriageStep] = useState(1);
   const [error, setError] = useState("");
-  const [expandedHypothesis, setExpandedHypothesis] = useState(0);
-  const [viewMode, setViewMode] = useState("rca"); // "rca" | "overall_recommendation" | "ledger"
-  const [causeRecModal, setCauseRecModal] = useState(null); // specific cause hypothesis
+  // Section 13 CRITICAL: All hypothesis cards start COLLAPSED (null)
+  const [expandedHypothesis, setExpandedHypothesis] = useState(null);
+  const [showTechnicalAudit, setShowTechnicalAudit] = useState(false);
+  const [showInsightGeneration, setShowInsightGeneration] = useState(false);
+  const [causeRecModal, setCauseRecModal] = useState(null);
+  
+  // Feedback state
+  const [decisionType, setDecisionType] = useState(null); // "approved" | "rejected" | "ignored"
+  const [rejectReason, setRejectReason] = useState("");
   const [feedbackComment, setFeedbackComment] = useState("");
   const [deciding, setDeciding] = useState(false);
+  const [decisionDone, setDecisionDone] = useState(false);
 
   useEffect(() => {
     loadInvestigation();
@@ -28,24 +47,34 @@ export default function InvestigationDetailPage() {
     setTriageStep(1);
     setError("");
     try {
-      // Step-by-step triage animation for Screen 3
-      setTimeout(() => setTriageStep(2), 600);
-      setTimeout(() => setTriageStep(3), 1200);
-      
+      setTimeout(() => setTriageStep(2), 400);
+      setTimeout(() => setTriageStep(3), 800);
+
       const data = await investigateAlert(alertId, persona);
       setInvestigation(data);
     } catch (err) {
       setError(err.message);
     } finally {
-      setTimeout(() => setLoading(false), 1500);
+      setTimeout(() => setLoading(false), 900);
     }
   }
 
-  async function handleDecision(decision) {
+  async function handleDecision(type) {
     setDeciding(true);
     try {
-      await saveDecision(alertId, { decision, persona, feedback: feedbackComment });
-      setTimeout(() => navigate(`/dashboard?persona=${encodeURIComponent(persona)}`), 600);
+      await saveDecision(alertId, {
+        decision: type,
+        persona,
+        reason: type === "rejected" ? rejectReason : null,
+        feedback: feedbackComment
+      });
+      setDecisionDone(true);
+      setDecisionType(type);
+      
+      // Auto return to dashboard after brief confirmation
+      setTimeout(() => {
+        navigate(`/dashboard?persona=${encodeURIComponent(persona)}`);
+      }, 1200);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -53,47 +82,61 @@ export default function InvestigationDetailPage() {
     }
   }
 
-  // SCREEN 3: DIAGNOSIS LOADING / TRIAGE
+  // TRIAGE LOADING SCAN
   if (loading) {
     return (
       <div className="investigation-shell">
         <header className="investigation-header">
           <button className="back-button" onClick={() => navigate(`/dashboard?persona=${encodeURIComponent(persona)}`)}>
-            <ArrowLeft size={20} /> Back
+            <ArrowLeft size={18} /> Return to Dashboard
           </button>
         </header>
-        <main className="investigation-main" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '70vh' }}>
-          <div className="loading-progress-box" style={{ maxWidth: '560px', width: '100%', padding: '32px', background: '#fff', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.05)' }}>
-            <h2 style={{ marginTop: 0, marginBottom: '24px', fontSize: '1.25rem', color: '#1a202c', borderBottom: '1px solid #edf2f7', paddingBottom: '12px' }}>
-              DIAGNOSIS IN PROGRESS · TRIAGE
+        <main className="investigation-main centered-flex">
+          <div className="triage-loading-card">
+            <h2 className="triage-title">
+              DIAGNOSIS IN PROGRESS · TRIAGE SCAN
             </h2>
 
-            <div className="triage-section" style={{ marginBottom: '20px' }}>
-              <div style={{ fontWeight: 'bold', fontSize: '0.9rem', color: '#3182ce', marginBottom: '6px' }}>PATH 1: Direct Event Match</div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.9rem', color: triageStep >= 1 ? '#2d3748' : '#a0aec0' }}>
-                {triageStep > 1 ? <CheckCircle2 size={18} color="#38a169" /> : <Activity size={18} className="spin" color="#3182ce" />}
-                <span>Scanning operational change log...</span>
+            <div className="triage-step-item">
+              <div className="triage-path-label">PATH 1: Direct Event Match</div>
+              <div className="triage-status-row">
+                {triageStep > 1 ? (
+                  <CheckCircle2 size={18} color="#38a169" />
+                ) : (
+                  <Activity size={18} className="spin" color="#7800c4" />
+                )}
+                <span>Scanning change-log events...</span>
               </div>
               {triageStep > 1 && investigation?.path_type !== "FAST" && (
-                <div style={{ fontSize: '0.8rem', color: '#718096', marginLeft: '28px', marginTop: '4px' }}>
-                  ✓ No direct match found
-                </div>
+                <div className="triage-subtext">✓ No direct change-log match — escalating to deep research</div>
               )}
             </div>
 
             {triageStep >= 2 && (
-              <div className="triage-section" style={{ marginBottom: '20px' }}>
-                <div style={{ fontWeight: 'bold', fontSize: '0.9rem', color: '#805ad5', marginBottom: '6px' }}>PATH 2: Deep Research</div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.9rem', color: '#2d3748', marginBottom: '6px' }}>
-                  {triageStep > 2 ? <CheckCircle2 size={18} color="#38a169" /> : <Activity size={18} className="spin" color="#805ad5" />}
-                  <span>Retrieving telemetry evidence...</span>
+              <div className="triage-step-item margin-top-md">
+                <div className="triage-path-label deep">PATH 2: Deep Causal Research</div>
+                <div className="triage-status-row">
+                  {triageStep > 2 ? (
+                    <CheckCircle2 size={18} color="#38a169" />
+                  ) : (
+                    <Activity size={18} className="spin" color="#7800c4" />
+                  )}
+                  <span>Retrieving multi-source evidence...</span>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.9rem', color: triageStep >= 3 ? '#2d3748' : '#a0aec0', marginBottom: '6px' }}>
-                  {triageStep >= 3 ? <CheckCircle2 size={18} color="#38a169" /> : <Activity size={18} className="spin" color="#805ad5" />}
-                  <span>Testing 4 competing hypotheses (Supply, Demand, Pricing, Operational)...</span>
+                <div className="triage-status-row">
+                  {triageStep >= 3 ? (
+                    <CheckCircle2 size={18} color="#38a169" />
+                  ) : (
+                    <Activity size={18} className="spin" color="#7800c4" />
+                  )}
+                  <span>Testing 4 canonical hypotheses (Supply, Demand, Pricing, Operational)...</span>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.9rem', color: triageStep >= 3 ? '#2d3748' : '#a0aec0' }}>
-                  {triageStep >= 3 ? <CheckCircle2 size={18} color="#38a169" /> : <Activity size={18} className="spin" color="#805ad5" />}
+                <div className="triage-status-row">
+                  {triageStep >= 3 ? (
+                    <CheckCircle2 size={18} color="#38a169" />
+                  ) : (
+                    <Activity size={18} className="spin" color="#7800c4" />
+                  )}
                   <span>Evaluating Weighted Evidence Confidence & Persona Rules...</span>
                 </div>
               </div>
@@ -109,14 +152,17 @@ export default function InvestigationDetailPage() {
       <div className="investigation-shell">
         <header className="investigation-header">
           <button className="back-button" onClick={() => navigate(`/dashboard?persona=${encodeURIComponent(persona)}`)}>
-            <ArrowLeft size={20} /> Back
+            <ArrowLeft size={18} /> Return to Dashboard
           </button>
         </header>
         <main className="investigation-main">
           <div className="error-container">
             <AlertCircle size={32} />
-            <h2>Investigation Failed</h2>
-            <p>{error || "Unable to load investigation details"}</p>
+            <h2>Investigation Unavailable</h2>
+            <p>{error || "Unable to retrieve investigation records."}</p>
+            <button className="primary-button margin-top-md" onClick={loadInvestigation}>
+              Retry Investigation
+            </button>
           </div>
         </main>
       </div>
@@ -125,461 +171,489 @@ export default function InvestigationDetailPage() {
 
   const alert = investigation.alert;
   const isFastPath = investigation.path_type === "FAST";
-  const isSlowPath = investigation.path_type === "SLOW";
   const isAbstain = investigation.path_type === "ABSTAIN";
   const isConflict = investigation.route === "UNRESOLVED_CONFLICT";
-  const topHypothesis = investigation.hypotheses?.find(h => h.supported) || investigation.hypotheses?.[0];
+  const isResolved = investigation.route === "RESOLVED";
+  const topHypothesis = investigation.hypotheses?.find((h) => h.supported) || investigation.hypotheses?.[0];
 
   return (
     <div className="investigation-shell">
       <header className="investigation-header">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+        <div className="header-left">
           <button className="back-button" onClick={() => navigate(`/dashboard?persona=${encodeURIComponent(persona)}`)}>
-            <ArrowLeft size={20} /> Dashboard
+            <ArrowLeft size={18} /> Dashboard
           </button>
-          <span style={{ fontSize: '0.85rem', color: '#666', background: '#edf2f7', padding: '4px 12px', borderRadius: '12px' }}>
-            Persona: <strong>{persona}</strong>
+          <span className="persona-chip">
+            Perspective: <strong>{persona}</strong>
           </span>
         </div>
-        <div className="header-nav" style={{ display: 'flex', gap: '12px' }}>
-          <button
-            className={`secondary-button ${viewMode === "rca" ? "active" : ""}`}
-            onClick={() => setViewMode("rca")}
-            style={{ padding: '6px 14px', borderRadius: '6px', fontSize: '0.85rem', fontWeight: viewMode === "rca" ? 'bold' : 'normal' }}
-          >
-            Root Cause Analysis
-          </button>
-          {!isAbstain && !isConflict && (
-            <button
-              className={`secondary-button ${viewMode === "overall_recommendation" ? "active" : ""}`}
-              onClick={() => setViewMode("overall_recommendation")}
-              style={{ padding: '6px 14px', borderRadius: '6px', fontSize: '0.85rem', fontWeight: viewMode === "overall_recommendation" ? 'bold' : 'normal' }}
-            >
-              Overall Recommendation
-            </button>
-          )}
-          <button
-            className={`secondary-button ${viewMode === "ledger" ? "active" : ""}`}
-            onClick={() => setViewMode("ledger")}
-            style={{ padding: '6px 14px', borderRadius: '6px', fontSize: '0.85rem', fontWeight: viewMode === "ledger" ? 'bold' : 'normal' }}
-          >
-            Evidence Ledger
-          </button>
+        <div className="header-right">
+          <span className={`path-indicator ${isFastPath ? "fast" : isAbstain ? "abstain" : isConflict ? "conflict" : "resolved"}`}>
+            {isFastPath ? "Path 1 · Direct Event Match" : isAbstain ? "Diagnostic Abstention" : isConflict ? "Contradictory Signals" : "Path 2 · Deep Causal Research"}
+          </span>
         </div>
       </header>
 
       <main className="investigation-main">
         <div className="investigation-container">
 
-          {/* VIEW MODE: EVIDENCE LEDGER */}
-          {viewMode === "ledger" && (
-            <section className="investigation-section ledger-view">
-              <div className="section-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <h2>Evidence Ledger & Audit Trail</h2>
-                <span className="count-badge" style={{ background: '#edf2f7', padding: '4px 10px', borderRadius: '6px', fontSize: '0.85rem' }}>
-                  {investigation.ledger_rows?.length || 0} Telemetry Operations
+          {decisionDone && (
+            <div className="decision-toast-banner">
+              <CheckCircle2 size={20} />
+              <span>Decision recorded successfully. Updating workspace...</span>
+            </div>
+          )}
+
+          {/* SIGNAL OVERVIEW */}
+          <section className="investigation-section alert-overview-card">
+            <div className="overview-header-row">
+              <div>
+                <span className="section-eyebrow">SIGNAL CONTEXT · {alert.id}</span>
+                <h1>{alert.kpi} Anomaly</h1>
+                <p className="context-subline">
+                  {alert.category} <span>/</span> {alert.region} · Week {alert.week_start}
+                </p>
+              </div>
+              <div className="overview-impact-box">
+                <small>Financial Impact</small>
+                <strong className={alert.delta_inr < 0 ? "negative" : "positive"}>{alert.delta_fmt}</strong>
+                <span className="pct-sub">{alert.pct_fmt || `${((alert.pct_change || 0) * 100).toFixed(1)}%`} vs baseline</span>
+              </div>
+            </div>
+
+            {/* Horizontal 3-column KPI boxes */}
+            <div className="horizontal-kpi-summary margin-top-md">
+              <div className="summary-box">
+                <small>BASELINE MEAN</small>
+                <strong>{alert.baseline_fmt || `₹${(alert.baseline_mean || 0).toLocaleString("en-IN")}`}</strong>
+              </div>
+              <div className="summary-box">
+                <small>CURRENT OBSERVED</small>
+                <strong>{alert.current_fmt || `₹${(alert.current || 0).toLocaleString("en-IN")}`}</strong>
+              </div>
+              <div className="summary-box">
+                <small>NET VARIANCE</small>
+                <strong className={alert.delta_inr < 0 ? "negative" : "positive"}>
+                  {alert.pct_fmt || `${((alert.pct_change || 0) * 100).toFixed(1)}%`}
+                </strong>
+              </div>
+            </div>
+          </section>
+
+          {/* TELEMETRY CHART PREVIEW */}
+          <section className="investigation-section">
+            <div className="section-title">
+              <h2>TELEMETRY OBSERVED TREND</h2>
+            </div>
+            <KPIChart alert={alert} />
+          </section>
+
+          {/* PATH 1: FAST PATH DIRECT EVENT MATCH */}
+          {isFastPath && (
+            <section className="investigation-section fast-path-result-box">
+              <div className="fast-path-header">
+                <CheckCircle2 size={28} color="#38a169" />
+                <div>
+                  <span className="fast-path-badge">DIRECT EVENT MATCH FOUND</span>
+                  <h2>Verified Operational Event Match</h2>
+                  <p className="fast-path-sub">
+                    Direct change-log event: <strong>[{investigation.fast_path?.event_type}]</strong> on <strong>{investigation.fast_path?.event_date}</strong>.
+                  </p>
+                </div>
+              </div>
+              <div className="event-description-callout">
+                <p>"{investigation.fast_path?.description}"</p>
+                <small>Matched against: Category {alert.category} · Region {alert.region} · Observation Window Week {alert.week_start}</small>
+              </div>
+            </section>
+          )}
+
+          {/* PATH 2: DEEP PATH ROOT CAUSE (RESOLVED) */}
+          {isResolved && topHypothesis && (
+            <section className="investigation-section root-cause-spotlight">
+              <div className="spotlight-badge-row">
+                <span className="spotlight-tag">PRIMARY ROOT CAUSE IDENTIFIED</span>
+                <span className="confidence-pill">
+                  {topHypothesis.confidence_pct || Math.round((topHypothesis.score || 0) * 100)}% Confidence
                 </span>
               </div>
-              <div className="ledger-table-box" style={{ background: '#fff', borderRadius: '8px', border: '1px solid #e2e8f0', overflow: 'hidden' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.88rem' }}>
+
+              <h2 className="spotlight-title">{topHypothesis.name}</h2>
+              <p className="spotlight-verdict">{topHypothesis.verdict_summary || topHypothesis.deciding_value || "Telemetry patterns deterministically support this hypothesis."}</p>
+
+              <div className="evidence-reasoning-grid">
+                <div className="reasoning-box supporting">
+                  <strong>Supporting Telemetry Evidence</strong>
+                  <p>{topHypothesis.supporting_evidence || "Empirical telemetry aligns with observed signal pattern."}</p>
+                </div>
+                <div className="reasoning-box contrary">
+                  <strong>Contrary Evidence / Alternative Falsification</strong>
+                  <p>{topHypothesis.contrary_evidence || "No material contrary evidence identified across alternative hypotheses."}</p>
+                </div>
+              </div>
+            </section>
+          )}
+
+          {/* COMPETING CAUSES (SECTION 12 & 13: ALL 4 CANONICAL HYPOTHESES START COLLAPSED) */}
+          {investigation.hypotheses && investigation.hypotheses.length > 0 && !isAbstain && (
+            <section className="investigation-section">
+              <div className="section-title">
+                <h2>COMPETING CAUSES EVALUATED ({investigation.hypotheses.length})</h2>
+                <small className="section-subtitle">Deterministically evaluated & falsified hypotheses</small>
+              </div>
+
+              <div className="hypotheses-list-container">
+                {investigation.hypotheses.slice(0, 4).map((hyp, idx) => {
+                  const isExpanded = expandedHypothesis === idx;
+                  const scorePct = hyp.confidence_pct || Math.round((hyp.score || 0) * 100);
+
+                  return (
+                    <div
+                      key={idx}
+                      className={`hypothesis-row-card ${hyp.supported ? "supported-card" : "rejected-card"}`}
+                    >
+                      <div className="hypothesis-row-head">
+                        <div className="hyp-row-left">
+                          <span className="hyp-index">{idx + 1}.</span>
+                          <strong className="hyp-name">{hyp.name}</strong>
+                          <span className={`verdict-pill ${hyp.supported ? "supported" : "rejected"}`}>
+                            {hyp.supported ? "Supported" : "Falsified / Rejected"}
+                          </span>
+                        </div>
+
+                        <div className="hyp-row-right">
+                          <span className="score-val">{scorePct}%</span>
+                          <button
+                            className="secondary-button collapse-btn"
+                            onClick={() => setExpandedHypothesis(isExpanded ? null : idx)}
+                          >
+                            {isExpanded ? (
+                              <>Collapse <ChevronUp size={15} /></>
+                            ) : (
+                              <>Expand <ChevronDown size={15} /></>
+                            )}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* EXPANDED DETAILS ON DEMAND ONLY (Section 13) */}
+                      {isExpanded && (
+                        <div className="hypothesis-expanded-body">
+                          <div className="exp-grid-container">
+                            <div className="exp-box">
+                              <span className="exp-label">SUPPORTING EVIDENCE</span>
+                              <p>{hyp.supporting_evidence || hyp.deciding_value || "Telemetry patterns match criteria."}</p>
+                            </div>
+                            <div className="exp-box">
+                              <span className="exp-label contrary">CONTRARY EVIDENCE / FALSIFICATION</span>
+                              <p>{hyp.contrary_evidence || "No material contrary evidence found."}</p>
+                            </div>
+                            <div className="exp-box span-full">
+                              <span className="exp-label">WEIGHTED EVIDENCE CONFIDENCE MODEL</span>
+                              <div className="confidence-breakdown-row">
+                                <div><span>Temporal Correlation (W1):</span> <strong>{investigation.confidence?.components?.temporal_correlation ?? '1.0'}</strong></div>
+                                <div><span>Source Reliability (W2):</span> <strong>{investigation.confidence?.components?.source_agreement ?? '1.0'}</strong></div>
+                                <div><span>Hypothesis Margin (W3):</span> <strong>{investigation.confidence?.components?.hypothesis_margin ?? '0.8'}</strong></div>
+                                <div><span>Data Completeness (W4):</span> <strong>{investigation.confidence?.components?.data_completeness ?? '1.0'}</strong></div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+
+          {/* CONFLICT SCREEN (Section 14) */}
+          {isConflict && (
+            <section className="investigation-section conflict-alert-card">
+              <div className="conflict-header-row">
+                <ShieldAlert size={28} color="#e53e3e" />
+                <div>
+                  <span className="conflict-badge">UNRESOLVED CONFLICT DETECTED</span>
+                  <h2>Conflicting Evidence Identified</h2>
+                  <p className="conflict-sub">Automated diagnosis withheld due to cross-regional signal contradiction.</p>
+                </div>
+              </div>
+
+              <div className="conflict-signals-grid">
+                <div className="signal-box">
+                  <strong>Signal A (Observed Trajectory)</strong>
+                  <p>{investigation.conflict?.signal_a}</p>
+                </div>
+                <div className="signal-box">
+                  <strong>Signal B (Contradictory Benchmark)</strong>
+                  <p>{investigation.conflict?.signal_b}</p>
+                </div>
+              </div>
+
+              <div className="conflict-action-notice">
+                <strong>Directive:</strong>
+                <p>{investigation.conflict?.escalation_directive || "Escalate for manual commercial audit — do not automate operational changes."}</p>
+              </div>
+            </section>
+          )}
+
+          {/* ABSTAIN SCREEN (Section 15) */}
+          {isAbstain && (
+            <section className="investigation-section abstain-alert-card">
+              <div className="abstain-header-row">
+                <AlertCircle size={28} color="#dd6b20" />
+                <div>
+                  <span className="abstain-badge">INSUFFICIENT EVIDENCE TO DIAGNOSE</span>
+                  <h2>Diagnostic Abstention</h2>
+                  <p className="abstain-sub">The system deliberately refused to guess due to telemetry data gaps.</p>
+                </div>
+              </div>
+
+              <div className="abstain-details-grid">
+                <div className="abstain-box">
+                  <strong>Why Diagnosis Was Withheld</strong>
+                  <p>{investigation.abstention?.reason}</p>
+                </div>
+                <div className="abstain-box">
+                  <strong>Missing Telemetry Data</strong>
+                  <p>{investigation.abstention?.missing_evidence}</p>
+                </div>
+                <div className="abstain-box">
+                  <strong>Required Data to Enable Diagnosis</strong>
+                  <p>{investigation.abstention?.required_data}</p>
+                </div>
+              </div>
+
+              <div className="abstain-policy-note">
+                <p>✓ Policy Enforced: Zero LLM narration calls were made for this response.</p>
+              </div>
+            </section>
+          )}
+
+          {/* RECOMMENDATION EXPERIENCE (Section 16, 17) */}
+          {investigation.recommendation && !isAbstain && !isConflict && (
+            <section className="investigation-section recommendation-primary-card">
+              <div className="rec-eyebrow-row">
+                <span className="rec-eyebrow">RECOMMENDED ACTION DIRECTIVE</span>
+                <span className="rec-owner-badge">Owner: {investigation.recommendation.owner}</span>
+              </div>
+
+              {/* Action is the strongest visual element */}
+              <h2 className="rec-main-action">{investigation.recommendation.action}</h2>
+
+              {investigation.recommendation.estimated_impact && (
+                <div className="rec-impact-banner">
+                  <span>Expected Recovery:</span>
+                  <strong>{investigation.recommendation.est_impact_fmt || `₹${investigation.recommendation.estimated_impact.toLocaleString("en-IN")}`} / wk</strong>
+                </div>
+              )}
+
+              <div className="rec-matrix-grid">
+                <div>
+                  <small>ROOT DRIVER</small>
+                  <p>{investigation.recommendation.driver}</p>
+                </div>
+                <div>
+                  <small>CONTROLLABLE LEVER</small>
+                  <p>{investigation.recommendation.lever}</p>
+                </div>
+                <div>
+                  <small>CONFIDENCE LEVEL</small>
+                  <p>{investigation.recommendation.confidence}</p>
+                </div>
+                <div>
+                  <small>MONITORING PLAN</small>
+                  <p>{investigation.recommendation.monitoring_plan}</p>
+                </div>
+              </div>
+
+              {/* AI SUMMARY (Section 17) */}
+              {investigation.narrative && (
+                <div className="ai-summary-container">
+                  <div className="ai-summary-head">
+                    <span className="ai-summary-title">Executive Summary</span>
+                    <span className="ai-trust-pill">LLM · Narration only</span>
+                  </div>
+                  <p className="ai-summary-body">{investigation.narrative.text}</p>
+
+                  <button
+                    className="insight-gen-toggle"
+                    onClick={() => setShowInsightGeneration(!showInsightGeneration)}
+                  >
+                    <HelpCircle size={14} />
+                    {showInsightGeneration ? "Hide generation details" : "How this insight was generated"}
+                  </button>
+
+                  {showInsightGeneration && (
+                    <div className="insight-gen-details">
+                      <ul>
+                        <li>✓ Deterministic Causal Engine analysis</li>
+                        <li>✓ Empirical multi-source telemetry verified</li>
+                        <li>✓ LLM used strictly for copy narration (no mathematical calculation)</li>
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
+            </section>
+          )}
+
+          {/* EVIDENCE & TRUST / TECHNICAL AUDIT (Section 18, 19) */}
+          <section className="investigation-section">
+            <div className="section-title">
+              <h2>EVIDENCE & TRUST</h2>
+              <button
+                className="secondary-button"
+                onClick={() => setShowTechnicalAudit(!showTechnicalAudit)}
+              >
+                <FileText size={15} />
+                {showTechnicalAudit ? "Hide Technical Audit" : "View Technical Audit"}
+              </button>
+            </div>
+
+            <div className="evidence-trust-summary-grid">
+              <div className="trust-stat-item">
+                <strong>Multi-Source Retrieval</strong>
+                <p>4 empirical telemetry sources verified</p>
+              </div>
+              <div className="trust-stat-item">
+                <strong>Deterministic Causal Engine</strong>
+                <p>Formula & rules-based hypothesis scoring</p>
+              </div>
+              <div className="trust-stat-item">
+                <strong>LLM Boundary</strong>
+                <p>Strictly constrained to narration</p>
+              </div>
+            </div>
+
+            {/* Detailed Ledger Audit (Section 18) */}
+            {showTechnicalAudit && (
+              <div className="technical-audit-table-wrapper margin-top-md">
+                <table className="audit-table">
                   <thead>
-                    <tr style={{ background: '#f7fafc', borderBottom: '1px solid #e2e8f0', textAlign: 'left' }}>
-                      <th style={{ padding: '12px' }}>Step</th>
-                      <th style={{ padding: '12px' }}>Engine / Method</th>
-                      <th style={{ padding: '12px' }}>Latency</th>
-                      <th style={{ padding: '12px' }}>LLM Call?</th>
-                      <th style={{ padding: '12px' }}>Est. Cost</th>
-                      <th style={{ padding: '12px' }}>Note / Provenance</th>
+                    <tr>
+                      <th>Step</th>
+                      <th>Engine / Method</th>
+                      <th>Latency</th>
+                      <th>LLM Call</th>
+                      <th>Est. Cost</th>
+                      <th>Provenance / Notes</th>
                     </tr>
                   </thead>
                   <tbody>
                     {(investigation.ledger_rows || []).map((row, idx) => (
-                      <tr key={idx} style={{ borderBottom: '1px solid #edf2f7' }}>
-                        <td style={{ padding: '12px', fontWeight: 'bold' }}>{row.step}</td>
-                        <td style={{ padding: '12px' }}>
-                          <span style={{
-                            padding: '2px 8px', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 600,
-                            background: row.engine === "Deterministic" ? "#c6f6d5" : row.engine?.includes("LLM") ? "#e9d8fd" : "#feebc8",
-                            color: row.engine === "Deterministic" ? "#22543d" : row.engine?.includes("LLM") ? "#553c9a" : "#744210"
-                          }}>
-                            {row.engine}
+                      <tr key={idx}>
+                        <td className="step-cell">{row.step}</td>
+                        <td>
+                          <span className={`engine-badge ${row.engine === "Deterministic" ? "det" : row.engine?.includes("LLM") ? "llm" : "ret"}`}>
+                            {row.engine === "Multi-Source Retrieval" ? "Multi-Source Retrieval" : row.engine}
                           </span>
                         </td>
-                        <td style={{ padding: '12px' }}>{row.latency_ms} ms</td>
-                        <td style={{ padding: '12px' }}>{row.engine?.includes("LLM") ? "Yes" : "No"}</td>
-                        <td style={{ padding: '12px' }}>${row.est_cost_usd || "0.0000"}</td>
-                        <td style={{ padding: '12px', color: '#4a5568' }}>{row.note}</td>
+                        <td>{row.latency_ms} ms</td>
+                        <td>{row.engine?.includes("LLM") ? "Yes" : "No"}</td>
+                        <td>${row.est_cost_usd || "0.0000"}</td>
+                        <td className="note-cell">{row.note}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
-            </section>
-          )}
+            )}
+          </section>
 
-          {/* VIEW MODE: OVERALL RECOMMENDATION */}
-          {viewMode === "overall_recommendation" && (
-            <section className="investigation-section recommendation-view">
-              <div className="section-title">
-                <h2>OVERALL RECOMMENDED SOLUTION</h2>
+          {/* FEEDBACK & ACTION PERSISTENCE LOOP (Section 20, 21, 22) */}
+          {!isAbstain && (
+            <section className="investigation-section feedback-card">
+              <h3>Was this recommendation useful?</h3>
+              <p className="feedback-sub">Persist your commercial decision to calibrate future hypothesis weights.</p>
+
+              {decisionType === "rejected" && (
+                <div className="reject-reason-box margin-top-sm">
+                  <label>Reason for rejection:</label>
+                  <select
+                    value={rejectReason}
+                    onChange={(e) => setRejectReason(e.target.value)}
+                    className="reject-select"
+                  >
+                    <option value="">Select reason...</option>
+                    <option value="Wrong cause">Wrong cause</option>
+                    <option value="Missing evidence">Missing evidence</option>
+                    <option value="Wrong impact">Wrong impact</option>
+                    <option value="Wrong recommendation">Wrong recommendation</option>
+                    <option value="Other">Other</option>
+                  </select>
+                </div>
+              )}
+
+              <div className="feedback-comment-box margin-top-sm">
+                <textarea
+                  rows={2}
+                  placeholder="Optional decision comment..."
+                  value={feedbackComment}
+                  onChange={(e) => setFeedbackComment(e.target.value)}
+                  className="feedback-textarea"
+                />
               </div>
 
-              {investigation.recommendation && (
-                <div className="recommendation-card dominant" style={{ background: '#ebf8ff', border: '2px solid #3182ce', padding: '24px', borderRadius: '12px', marginBottom: '24px' }}>
-                  <div className="rec-top" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                    <div>
-                      <span style={{ color: '#2b6cb0', fontSize: '0.8rem', fontWeight: 600, textTransform: 'uppercase' }}>Validated Primary Action</span>
-                      <h2 style={{ margin: '4px 0 0 0', color: '#2c5282', fontSize: '1.4rem' }}>{investigation.recommendation.action}</h2>
-                    </div>
-                    {investigation.recommendation.estimated_impact && (
-                      <div style={{ background: '#3182ce', color: '#fff', padding: '10px 18px', borderRadius: '8px', fontWeight: 'bold', fontSize: '1.2rem' }}>
-                        ₹ Impact: {investigation.recommendation.est_impact_fmt || `₹${investigation.recommendation.estimated_impact.toLocaleString("en-IN")}`}
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="rec-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px', background: '#fff', padding: '20px', borderRadius: '8px', marginBottom: '20px' }}>
-                    <div><strong>Driver:</strong> <p style={{ margin: '4px 0 0 0', color: '#4a5568' }}>{investigation.recommendation.driver}</p></div>
-                    <div><strong>Controllable Lever:</strong> <p style={{ margin: '4px 0 0 0', color: '#4a5568' }}>{investigation.recommendation.lever}</p></div>
-                    <div><strong>Owner / Accountable Team:</strong> <p style={{ margin: '4px 0 0 0', color: '#4a5568' }}>{investigation.recommendation.owner}</p></div>
-                    <div><strong>Confidence:</strong> <p style={{ margin: '4px 0 0 0', color: '#4a5568' }}>{investigation.recommendation.confidence}</p></div>
-                    <div style={{ gridColumn: 'span 2' }}>
-                      <strong>Monitoring & Verification Plan:</strong>
-                      <p style={{ margin: '4px 0 0 0', color: '#4a5568' }}>{investigation.recommendation.monitoring_plan}</p>
-                    </div>
-                  </div>
-
-                  {investigation.narrative && (
-                    <div className="llm-narration-box" style={{ background: '#f7fafc', borderLeft: '4px solid #3182ce', padding: '16px', borderRadius: '4px' }}>
-                      <strong style={{ fontSize: '0.85rem', color: '#718096', display: 'block', marginBottom: '6px' }}>Governed Executive Brief (Single Render):</strong>
-                      <p style={{ margin: 0, fontSize: '0.95rem', color: '#2d3748', lineHeight: 1.6 }}>{investigation.narrative.text}</p>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Feedback Calibration Box */}
-              <div className="feedback-calibration-box" style={{ background: '#fff', border: '1px solid #e2e8f0', padding: '24px', borderRadius: '12px' }}>
-                <h3 style={{ marginTop: 0, marginBottom: '12px', fontSize: '1.1rem' }}>Empirical Feedback Calibration</h3>
-                <p style={{ color: '#718096', fontSize: '0.9rem', marginBottom: '16px' }}>
-                  Record your decision to calibrate future hypothesis weights and confidence scoring.
-                </p>
-                <div style={{ marginBottom: '16px' }}>
-                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: '#4a5568', marginBottom: '6px' }}>
-                    Recommendation Feedback / Reason (Optional):
-                  </label>
-                  <textarea
-                    rows={3}
-                    placeholder="Add recommendation or feedback..."
-                    value={feedbackComment}
-                    onChange={(e) => setFeedbackComment(e.target.value)}
-                    style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e0', fontSize: '0.9rem' }}
-                  />
-                </div>
-                <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
-                  <button
-                    className="secondary-button"
-                    onClick={() => handleDecision("rejected")}
-                    disabled={deciding}
-                    style={{ padding: '10px 20px', borderRadius: '6px', cursor: 'pointer' }}
-                  >
-                    {deciding ? "Recording..." : "Reject Action"}
-                  </button>
-                  <button
-                    className="primary-button"
-                    onClick={() => handleDecision("approved")}
-                    disabled={deciding}
-                    style={{ padding: '10px 28px', borderRadius: '6px', background: '#38a169', color: '#fff', fontWeight: 'bold', border: 'none', cursor: 'pointer' }}
-                  >
-                    {deciding ? "Recording..." : "Approve & Execute"}
-                  </button>
-                </div>
+              <div className="feedback-actions-row margin-top-md">
+                <button
+                  className="secondary-button ignore-btn"
+                  onClick={() => handleDecision("ignored")}
+                  disabled={deciding}
+                >
+                  Ignore Signal
+                </button>
+                <button
+                  className="secondary-button reject-btn"
+                  onClick={() => {
+                    if (decisionType !== "rejected") {
+                      setDecisionType("rejected");
+                    } else {
+                      handleDecision("rejected");
+                    }
+                  }}
+                  disabled={deciding}
+                >
+                  Reject Action
+                </button>
+                <button
+                  className="primary-button approve-btn"
+                  onClick={() => handleDecision("approved")}
+                  disabled={deciding}
+                >
+                  {deciding ? "Persisting Decision..." : "Approve & Execute"}
+                </button>
               </div>
             </section>
-          )}
-
-          {/* VIEW MODE: RCA */}
-          {viewMode === "rca" && (
-            <>
-              {/* Section 1: KPI Summary */}
-              <section className="investigation-section alert-overview" style={{ background: '#fff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0', marginBottom: '20px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div>
-                    <span style={{ fontSize: '0.8rem', color: '#718096', fontWeight: 600, textTransform: 'uppercase' }}>ALERT CONTEXT · {alert.id}</span>
-                    <h1 style={{ margin: '4px 0 0 0', fontSize: '1.5rem' }}>{alert.kpi} Anomaly</h1>
-                    <p style={{ margin: '4px 0 0 0', color: '#4a5568' }}>{alert.category} · {alert.region} · Week {alert.week_start}</p>
-                  </div>
-                  <div style={{ textAlign: 'right' }}>
-                    <small style={{ color: '#718096', fontSize: '0.8rem', display: 'block' }}>Business Impact</small>
-                    <strong className={alert.delta_inr < 0 ? "negative" : "positive"} style={{ fontSize: '1.6rem' }}>{alert.delta_fmt}</strong>
-                    <span style={{ display: 'block', fontSize: '0.9rem', color: '#718096' }}>{alert.pct_fmt} vs baseline</span>
-                  </div>
-                </div>
-              </section>
-
-              {/* FAST PATH SCREEN */}
-              {isFastPath && (
-                <section className="investigation-section fast-path-card" style={{ background: '#f0fff4', border: '2px solid #38a169', padding: '24px', borderRadius: '12px', marginBottom: '24px' }}>
-                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px' }}>
-                    <CheckCircle2 size={32} color="#38a169" />
-                    <div style={{ flex: 1 }}>
-                      <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#276749', background: '#c6f6d5', padding: '2px 8px', borderRadius: '4px' }}>
-                        FAST PATH — DIRECT CHANGE-LOG MATCH
-                      </span>
-                      <h2 style={{ margin: '8px 0 4px 0', color: '#22543d' }}>Verified Event Match Found</h2>
-                      <p style={{ margin: '0 0 12px 0', color: '#2d3748', fontSize: '0.95rem' }}>
-                        Direct event match in change log: <strong>[{investigation.fast_path?.event_type}]</strong> on <strong>{investigation.fast_path?.event_date}</strong>.
-                      </p>
-                      <p style={{ margin: '0 0 16px 0', color: '#4a5568', fontStyle: 'italic', background: '#fff', padding: '12px', borderRadius: '6px', border: '1px solid #c6f6d5' }}>
-                        "{investigation.fast_path?.description}"
-                      </p>
-                      <div style={{ display: 'flex', gap: '12px' }}>
-                        <button
-                          className="primary-button"
-                          onClick={() => setViewMode("overall_recommendation")}
-                          style={{ padding: '8px 18px', borderRadius: '6px', background: '#38a169', color: '#fff', border: 'none', cursor: 'pointer' }}
-                        >
-                          View Recommendation
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </section>
-              )}
-
-              {/* ABSTAIN SCREEN */}
-              {isAbstain && (
-                <section className="investigation-section abstention-screen" style={{ background: '#fffaf0', border: '2px solid #dd6b20', padding: '24px', borderRadius: '12px', marginBottom: '24px' }}>
-                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px' }}>
-                    <AlertCircle size={32} color="#dd6b20" />
-                    <div>
-                      <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#9c4221', background: '#feebc8', padding: '2px 8px', borderRadius: '4px' }}>
-                        INSUFFICIENT EVIDENCE (DIAGNOSTIC ABSTENTION)
-                      </span>
-                      <h2 style={{ margin: '8px 0 8px 0', color: '#7b341e' }}>CAUSE Abstained From Generating Recommendation</h2>
-                      <div style={{ display: 'grid', gap: '12px', marginTop: '16px', background: '#fff', padding: '16px', borderRadius: '8px', border: '1px solid #fbd38d' }}>
-                        <div><strong>Why:</strong> <p style={{ margin: '2px 0 0 0', color: '#4a5568' }}>{investigation.abstention?.reason}</p></div>
-                        <div><strong>Missing Evidence:</strong> <p style={{ margin: '2px 0 0 0', color: '#4a5568' }}>{investigation.abstention?.missing_evidence}</p></div>
-                        <div><strong>Required Data:</strong> <p style={{ margin: '2px 0 0 0', color: '#4a5568' }}>{investigation.abstention?.required_data}</p></div>
-                        <div><strong>Next Step:</strong> <p style={{ margin: '2px 0 0 0', color: '#4a5568' }}>{investigation.abstention?.recommendation}</p></div>
-                      </div>
-                      <div style={{ marginTop: '16px', fontSize: '0.85rem', color: '#744210', fontStyle: 'italic' }}>
-                        * CRITICAL POLICY: Zero LLM narration calls were made for this abstention response.
-                      </div>
-                    </div>
-                  </div>
-                </section>
-              )}
-
-              {/* CONFLICT SCREEN */}
-              {isConflict && (
-                <section className="investigation-section conflict-screen" style={{ background: '#fff5f5', border: '2px solid #e53e3e', padding: '24px', borderRadius: '12px', marginBottom: '24px' }}>
-                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px' }}>
-                    <ShieldAlert size={32} color="#e53e3e" />
-                    <div>
-                      <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#9b2c2c', background: '#fed7d7', padding: '2px 8px', borderRadius: '4px' }}>
-                        UNRESOLVED CONFLICT DETECTED
-                      </span>
-                      <h2 style={{ margin: '8px 0 8px 0', color: '#742a2a' }}>Cross-Regional Evidence Contradiction</h2>
-                      <div style={{ display: 'grid', gap: '12px', marginTop: '16px', background: '#fff', padding: '16px', borderRadius: '8px', border: '1px solid #feb2b2' }}>
-                        <div><strong>Signal A:</strong> <p style={{ margin: '2px 0 0 0', color: '#2d3748' }}>{investigation.conflict?.signal_a}</p></div>
-                        <div><strong>Signal B:</strong> <p style={{ margin: '2px 0 0 0', color: '#2d3748' }}>{investigation.conflict?.signal_b}</p></div>
-                        <div><strong>Conclusion:</strong> <p style={{ margin: '2px 0 0 0', color: '#c53030', fontWeight: 'bold' }}>Evidence is contradictory across comparable regions.</p></div>
-                        <div><strong>Action:</strong> <p style={{ margin: '2px 0 0 0', color: '#742a2a' }}>{investigation.conflict?.escalation_directive}</p></div>
-                      </div>
-                    </div>
-                  </div>
-                </section>
-              )}
-
-              {/* SCREEN 4: ROOT CAUSE ANALYSIS (EXACTLY 4 RANKED CAUSES) */}
-              {!isAbstain && (
-                <section className="investigation-section rca-causes" style={{ background: '#fff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-                  <div className="section-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                    <div>
-                      <h2 style={{ margin: 0, fontSize: '1.25rem' }}>ROOT CAUSE ANALYSIS</h2>
-                      <small style={{ color: '#718096' }}>Deterministically evaluated & ranked hypotheses</small>
-                    </div>
-                    <button
-                      className="primary-button"
-                      onClick={() => setViewMode("overall_recommendation")}
-                      style={{ padding: '8px 16px', borderRadius: '6px', background: '#3182ce', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}
-                    >
-                      View Overall Recommendation
-                    </button>
-                  </div>
-
-                  <div className="causes-list">
-                    {(investigation.hypotheses || []).slice(0, 4).map((hyp, idx) => {
-                      const isExpanded = expandedHypothesis === idx;
-                      const scorePct = hyp.confidence_pct || Math.round((hyp.score || 0) * 100);
-
-                      return (
-                        <div
-                          key={idx}
-                          className="cause-card"
-                          style={{
-                            border: '1px solid #e2e8f0', borderRadius: '8px', marginBottom: '16px', overflow: 'hidden',
-                            borderLeft: hyp.supported ? '4px solid #38a169' : '4px solid #cbd5e0'
-                          }}
-                        >
-                          <div
-                            className="cause-row-head"
-                            style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px', background: hyp.supported ? '#f0fff4' : '#fff' }}
-                          >
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                              <span style={{ fontWeight: 'bold', color: '#a0aec0', fontSize: '1.1rem' }}>{idx + 1}.</span>
-                              <strong style={{ fontSize: '1.1rem', color: '#1a202c' }}>{hyp.name}</strong>
-                              <span style={{
-                                fontSize: '0.75rem', fontWeight: 600, padding: '2px 8px', borderRadius: '4px',
-                                background: hyp.supported ? '#c6f6d5' : '#edf2f7',
-                                color: hyp.supported ? '#22543d' : '#718096'
-                              }}>
-                                {hyp.supported ? "Supported" : "Weak / Rejected"}
-                              </span>
-                            </div>
-
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                              <strong style={{ fontSize: '1.2rem', color: hyp.supported ? '#276749' : '#4a5568' }}>{scorePct}%</strong>
-                              <button
-                                className="secondary-button"
-                                onClick={() => setExpandedHypothesis(isExpanded ? null : idx)}
-                                style={{ padding: '6px 12px', borderRadius: '4px', fontSize: '0.85rem', cursor: 'pointer' }}
-                              >
-                                {isExpanded ? "Collapse" : "Expand"}
-                              </button>
-                              <button
-                                className="primary-button"
-                                onClick={() => setCauseRecModal(hyp)}
-                                style={{ padding: '6px 14px', borderRadius: '4px', fontSize: '0.85rem', background: '#3182ce', color: '#fff', border: 'none', cursor: 'pointer' }}
-                              >
-                                Recommendation
-                              </button>
-                            </div>
-                          </div>
-
-                          {/* EXPANDED 4-PART ANALYSIS VIEW */}
-                          {isExpanded && (
-                            <div className="cause-expanded-content" style={{ padding: '20px', background: '#f7fafc', borderTop: '1px solid #e2e8f0' }}>
-                              <h4 style={{ marginTop: 0, marginBottom: '16px', fontSize: '1rem', color: '#2d3748' }}>
-                                Detailed Analysis: {hyp.name}
-                              </h4>
-
-                              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                                {/* PART A: EVIDENCE */}
-                                <div style={{ background: '#fff', padding: '16px', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
-                                  <strong style={{ display: 'block', fontSize: '0.9rem', color: '#2b6cb0', marginBottom: '8px' }}>
-                                    A. EVIDENCE PROVENANCE
-                                  </strong>
-                                  <p style={{ fontSize: '0.85rem', margin: '0 0 8px 0', color: '#2d3748' }}>
-                                    <strong>Supporting:</strong> {hyp.supporting_evidence || hyp.deciding_value || "Telemetry patterns match hypothesis criteria."}
-                                  </p>
-                                  <p style={{ fontSize: '0.85rem', margin: 0, color: '#742a2a' }}>
-                                    <strong>Contrary:</strong> {hyp.contrary_evidence || "No material contrary evidence identified."}
-                                  </p>
-                                </div>
-
-                                {/* PART B: KPI SNAPSHOT */}
-                                <div style={{ background: '#fff', padding: '16px', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
-                                  <strong style={{ display: 'block', fontSize: '0.9rem', color: '#2b6cb0', marginBottom: '8px' }}>
-                                    B. REAL KPI TELEMETRY SNAPSHOT
-                                  </strong>
-                                  <KPIChart alert={alert} />
-                                </div>
-
-                                {/* PART C: CONFIDENCE */}
-                                <div style={{ background: '#fff', padding: '16px', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
-                                  <strong style={{ display: 'block', fontSize: '0.9rem', color: '#2b6cb0', marginBottom: '8px' }}>
-                                    C. WEIGHTED EVIDENCE CONFIDENCE
-                                  </strong>
-                                  <div style={{ fontSize: '0.85rem', color: '#4a5568' }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                                      <span>Temporal Correlation (W1):</span>
-                                      <strong>{investigation.confidence?.components?.temporal_correlation ?? '1.0'}</strong>
-                                    </div>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                                      <span>Source Agreement (W2):</span>
-                                      <strong>{investigation.confidence?.components?.source_agreement ?? '1.0'}</strong>
-                                    </div>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                                      <span>Hypothesis Margin (W3):</span>
-                                      <strong>{investigation.confidence?.components?.hypothesis_margin ?? '0.8'}</strong>
-                                    </div>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                                      <span>Data Completeness (W4):</span>
-                                      <strong>{investigation.confidence?.components?.data_completeness ?? '1.0'}</strong>
-                                    </div>
-                                    <div style={{ borderTop: '1px solid #edf2f7', paddingTop: '6px', marginTop: '6px', fontWeight: 'bold', display: 'flex', justifyContent: 'space-between' }}>
-                                      <span>Final Composite Confidence:</span>
-                                      <span style={{ color: '#2b6cb0' }}>{scorePct}%</span>
-                                    </div>
-                                  </div>
-                                </div>
-
-                                {/* PART D: CONFLICT */}
-                                <div style={{ background: '#fff', padding: '16px', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
-                                  <strong style={{ display: 'block', fontSize: '0.9rem', color: '#2b6cb0', marginBottom: '8px' }}>
-                                    D. CONFLICT AUDIT
-                                  </strong>
-                                  {isConflict ? (
-                                    <div style={{ fontSize: '0.85rem', color: '#c53030' }}>
-                                      <strong>Conflict Detected:</strong> Cross-regional signals contradict expected impact trajectory.
-                                    </div>
-                                  ) : (
-                                    <div style={{ fontSize: '0.85rem', color: '#276749' }}>
-                                      ✓ No material conflict detected across comparable categories/regions.
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </section>
-              )}
-            </>
           )}
 
         </div>
       </main>
 
-      {/* SPECIFIC CAUSE RECOMMENDATION MODAL */}
+      {/* CAUSE SPECIFIC RECOMMENDATION MODAL */}
       {causeRecModal && (
-        <div
-          className="overlay"
-          style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 1000 }}
-          onMouseDown={(e) => e.target === e.currentTarget && setCauseRecModal(null)}
-        >
-          <div style={{ background: '#fff', borderRadius: '12px', width: '90%', maxWidth: '600px', padding: '24px', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #eee', paddingBottom: '12px', marginBottom: '16px' }}>
+        <div className="modal-overlay" onMouseDown={(e) => e.target === e.currentTarget && setCauseRecModal(null)}>
+          <div className="investigate-modal-box">
+            <div className="modal-header-row">
               <div>
-                <span style={{ fontSize: '0.8rem', color: '#718096', fontWeight: 600 }}>CAUSE-SPECIFIC RECOMMENDATION</span>
-                <h3 style={{ margin: '4px 0 0 0' }}>{causeRecModal.name}</h3>
+                <span className="modal-snapshot-label">HYPOTHESIS SPECIFIC DIRECTIVE</span>
+                <h2>{causeRecModal.name}</h2>
               </div>
-              <button onClick={() => setCauseRecModal(null)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
-                <X size={20} />
+              <button className="close-modal-btn" onClick={() => setCauseRecModal(null)}>
+                <X size={18} />
               </button>
             </div>
 
-            <div style={{ display: 'grid', gap: '12px', fontSize: '0.9rem', color: '#2d3748' }}>
-              <div><strong>1. Driver:</strong> <p style={{ margin: '2px 0 0 0', color: '#4a5568' }}>{investigation.recommendation?.driver || causeRecModal.name}</p></div>
-              <div><strong>2. Controllable Lever:</strong> <p style={{ margin: '2px 0 0 0', color: '#4a5568' }}>{investigation.recommendation?.lever || "Inventory Allocation & Promotional Alignment"}</p></div>
-              <div><strong>3. Solution / Action:</strong> <p style={{ margin: '2px 0 0 0', color: '#2b6cb0', fontWeight: 'bold' }}>{investigation.recommendation?.action || "Execute targeted operational correction"}</p></div>
-              <div><strong>4. Expected Outcome / Impact:</strong> <p style={{ margin: '2px 0 0 0', color: '#276749', fontWeight: 'bold' }}>{investigation.recommendation?.est_impact_fmt || alert.delta_fmt}</p></div>
-              <div><strong>5. Owner:</strong> <p style={{ margin: '2px 0 0 0', color: '#4a5568' }}>{investigation.recommendation?.owner || "Category Manager / Ops Lead"}</p></div>
-              <div><strong>6. Confidence:</strong> <p style={{ margin: '2px 0 0 0', color: '#4a5568' }}>{causeRecModal.confidence_pct || Math.round((causeRecModal.score||0)*100)}%</p></div>
-              <div><strong>7. Monitoring Plan:</strong> <p style={{ margin: '2px 0 0 0', color: '#4a5568' }}>{investigation.recommendation?.monitoring_plan || "Re-evaluate weekly telemetry cycle"}</p></div>
+            <div className="cause-modal-grid">
+              <div><strong>Driver:</strong> <p>{investigation.recommendation?.driver || causeRecModal.name}</p></div>
+              <div><strong>Controllable Lever:</strong> <p>{investigation.recommendation?.lever || "Inventory & Promotional Alignment"}</p></div>
+              <div><strong>Action Directive:</strong> <p className="action-highlight">{investigation.recommendation?.action || "Execute targeted operational correction"}</p></div>
+              <div><strong>Confidence:</strong> <p>{causeRecModal.confidence_pct || Math.round((causeRecModal.score || 0) * 100)}%</p></div>
+              <div><strong>Monitoring Plan:</strong> <p>{investigation.recommendation?.monitoring_plan || "Track weekly telemetry cycle"}</p></div>
             </div>
 
-            <div style={{ marginTop: '20px', textAlign: 'right' }}>
-              <button
-                className="primary-button"
-                onClick={() => setCauseRecModal(null)}
-                style={{ padding: '8px 20px', borderRadius: '6px', background: '#3182ce', color: '#fff', border: 'none', cursor: 'pointer' }}
-              >
+            <div className="modal-actions-footer margin-top-md">
+              <button className="primary-button" onClick={() => setCauseRecModal(null)}>
                 Close
               </button>
             </div>
