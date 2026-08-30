@@ -126,3 +126,39 @@ def test_old_decisions_csv_backwards_compatibility(tmp_path):
     factor = calibrator.get_calibration_factor("Supply", "Beverages")
     # Under 3 reviews -> returns 1.0 safely without crashing
     assert factor == 1.0
+
+
+def test_dashboard_contains_all_5_kpi_types():
+    """Verify AnalysisService dashboard contains all 5 KPI types and fails if only Revenue+Marketing Spend exist."""
+    from backend.app.services.analysis_service import AnalysisService
+    service = AnalysisService()
+    dash = service.dashboard(refresh=True, persona="Category Manager")
+    alerts = dash.get("alerts", [])
+    kpi_set = {a["alert"]["kpi"] for a in alerts}
+
+    expected_kpis = {"Revenue", "Marketing Spend", "Units Sold", "Average Realized Price", "Stockout Incident Days"}
+    missing = expected_kpis - kpi_set
+    assert not missing, f"Dashboard missing KPI types: {missing}. Present KPIs: {kpi_set}"
+    assert len(kpi_set) == 5, f"Expected 5 KPI types on dashboard, got {len(kpi_set)}: {kpi_set}"
+
+
+def test_persona_ordering_differs_between_category_manager_and_cxo():
+    """Verify that Category Manager and CXO personas order the SAME underlying alert pool differently."""
+    from backend.app.services.analysis_service import AnalysisService
+    service = AnalysisService()
+
+    cm_dash = service.dashboard(refresh=True, persona="Category Manager")
+    cxo_dash = service.dashboard(refresh=True, persona="CXO")
+
+    cm_ids = [a["alert"]["id"] for a in cm_dash.get("alerts", [])]
+    cxo_ids = [a["alert"]["id"] for a in cxo_dash.get("alerts", [])]
+
+    # Same set of alert IDs
+    assert set(cm_ids) == set(cxo_ids)
+
+    # Different ordering
+    assert cm_ids != cxo_ids, "Category Manager and CXO must have different alert ordering based on persona lens!"
+
+    # Category Manager top KPI should be an operational KPI (Units Sold / Stockout Incident Days / Average Realized Price)
+    cm_top_kpi = cm_dash["alerts"][0]["alert"]["kpi"]
+    assert cm_top_kpi in ("Units Sold", "Stockout Incident Days", "Average Realized Price"), f"Category Manager top KPI should be operational, got: {cm_top_kpi}"

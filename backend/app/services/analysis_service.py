@@ -18,8 +18,19 @@ class AnalysisService:
     def _prioritize_alerts_for_persona(self, alerts_list: list[dict[str, Any]], persona: str) -> list[dict[str, Any]]:
         """
         Applies persona-specific prioritization lens to the common alert pool.
-        Category Manager Lens: Prioritizes operational velocity (Units Sold > Stockout Exposure > Price > Revenue > Marketing Spend).
-        CXO Lens: Prioritizes strategic financial impact (Revenue > Marketing Spend > Price > Stockout Exposure > Units Sold).
+        Category Manager Lens: Prioritizes operational velocity & driver severity:
+          1. Units Sold
+          2. Stockout Incident Days
+          3. Average Realized Price
+          4. Revenue
+          5. Marketing Spend
+        CXO Lens: Prioritizes strategic financial impact & enterprise risk:
+          1. Financial Impact (|delta_inr|)
+          2. Revenue
+          3. Marketing Spend
+          4. Average Realized Price
+          5. Stockout Incident Days
+          6. Units Sold
         Analytical truth, evidence, and scores remain 100% identical.
         """
         if persona == "CXO":
@@ -27,7 +38,7 @@ class AnalysisService:
                 "Revenue": 1,
                 "Marketing Spend": 2,
                 "Average Realized Price": 3,
-                "Stockout Exposure": 4,
+                "Stockout Incident Days": 4,
                 "Units Sold": 5
             }
             return sorted(
@@ -40,7 +51,7 @@ class AnalysisService:
         else:
             kpi_rank = {
                 "Units Sold": 1,
-                "Stockout Exposure": 2,
+                "Stockout Incident Days": 2,
                 "Average Realized Price": 3,
                 "Revenue": 4,
                 "Marketing Spend": 5

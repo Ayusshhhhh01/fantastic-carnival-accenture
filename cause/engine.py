@@ -199,9 +199,12 @@ def detect(sales_wk, camp_wk, inv_df=None, sales_daily_df=None):
             "direction": "down" if delta < 0 else "up",
             "low_data": low_data,
             "historical_series": series,
+            "current_fmt": fmt_inr(cur),
+            "baseline_fmt": fmt_inr(base),
+            "delta_fmt": fmt_inr(delta),
         })
 
-    # --- KPI 2: Marketing spend by category ---
+    # --- KPI 2: Marketing Spend by category ---
     cats = camp_wk.category.unique()
     for cat in cats:
         s = camp_wk[camp_wk.category == cat].groupby("week_start",
@@ -235,6 +238,9 @@ def detect(sales_wk, camp_wk, inv_df=None, sales_daily_df=None):
                 "direction": "down" if delta < 0 else "up",
                 "low_data": False,
                 "historical_series": series,
+                "current_fmt": fmt_inr(cur),
+                "baseline_fmt": fmt_inr(base),
+                "delta_fmt": fmt_inr(delta),
             })
 
     # --- KPI 3: Units Sold by category x region ---
@@ -272,6 +278,9 @@ def detect(sales_wk, camp_wk, inv_df=None, sales_daily_df=None):
                 "direction": "down" if delta < 0 else "up",
                 "low_data": len(hist) < MIN_BASELINE_WEEKS,
                 "historical_series": series,
+                "current_fmt": f"{int(cur):,} units",
+                "baseline_fmt": f"{int(base):,} units",
+                "delta_fmt": f"{int(delta):+,} units ({fmt_inr(delta_inr)})",
             })
 
     # --- KPI 4: Average Realized Price by category x region ---
@@ -310,6 +319,9 @@ def detect(sales_wk, camp_wk, inv_df=None, sales_daily_df=None):
                 "direction": "down" if delta < 0 else "up",
                 "low_data": len(hist) < MIN_BASELINE_WEEKS,
                 "historical_series": series,
+                "current_fmt": f"\u20b9{cur:,.2f}/unit",
+                "baseline_fmt": f"\u20b9{base:,.2f}/unit",
+                "delta_fmt": f"\u20b9{delta:+,.2f}/unit ({fmt_inr(delta_inr)})",
             })
 
     # --- KPI 5: Stockout Incident Days by category x region ---
@@ -355,48 +367,48 @@ def detect(sales_wk, camp_wk, inv_df=None, sales_daily_df=None):
                     "direction": "up",
                     "low_data": len(hist) < MIN_BASELINE_WEEKS,
                     "historical_series": series,
+                    "current_fmt": f"{int(cur)} days",
+                    "baseline_fmt": f"{int(base)} days",
+                    "delta_fmt": f"{int(delta):+} days ({fmt_inr(delta_inr)})",
                 })
 
-    # --- Canonical Demo ID Mapping (A1..A5) for Track 3 Scenarios ---
-    # A1: Revenue, Electronics, Region X (Deep Path Stockout)
-    # A2: Revenue, Electronics, Region Y (Conflict)
-    # A3: Revenue, Wearables, Region Z (Abstain)
-    # A4: Marketing Spend, Electronics, (all) (Demand Spike)
-    # A5: Revenue, Apparel, Region Z (Fast Path IT Incident)
-    canonical_specs = [
-        ("Revenue", "Electronics", "Region X"),
-        ("Revenue", "Electronics", "Region Y"),
-        ("Revenue", "Wearables", "Region Z"),
-        ("Marketing Spend", "Electronics", "(all)"),
-        ("Revenue", "Apparel", "Region Z"),
-    ]
+    # --- Scenario ID Assignment (A1..A5 for Track 3 Canonical Scenarios) ---
+    # Assign stable IDs A1..A5 so scenario test assertions can resolve specific alerts by ID.
+    canonical_specs = {
+        "A1": ("Revenue", "Electronics", "Region X"),
+        "A2": ("Revenue", "Electronics", "Region Y"),
+        "A3": ("Revenue", "Wearables", "Region Z"),
+        "A4": ("Marketing Spend", "Electronics", "(all)"),
+        "A5": ("Revenue", "Apparel", "Region Z"),
+    }
 
-    canonical_alerts = []
-    remaining_alerts = []
-
-    for spec in canonical_specs:
-        kpi, cat, reg = spec
+    assigned = {}
+    for aid, (kpi, cat, reg) in canonical_specs.items():
         match = next((a for a in alerts if a["kpi"] == kpi and a["category"] == cat and a["region"] == reg), None)
         if match:
-            canonical_alerts.append(match)
+            match["id"] = aid
+            assigned[id(match)] = aid
+
+    next_num = 6
+    for a in alerts:
+        if id(a) not in assigned:
+            a["id"] = f"A{next_num}"
+            next_num += 1
+
+    # --- COMPLETE ALERT POOL SEVERITY SORTING ---
+    # Do NOT force canonical_alerts to be first 5 positions in the array.
+    # Sort the complete alert pool by absolute rupee impact (or severity) so the dashboard
+    # receives a natural, unsuppressed alert pool across all 5 KPI families.
+    alerts.sort(key=lambda a: abs(a["delta_inr"]), reverse=True)
 
     for a in alerts:
-        if a not in canonical_alerts:
-            remaining_alerts.append(a)
+        if "pct_fmt" not in a:
+            a["pct_fmt"] = ("n/a (no baseline)" if a["pct_change"] is None
+                            else f"{a['pct_change']*100:+.1f}%")
+        if "z_fmt" not in a:
+            a["z_fmt"] = "n/a" if a["z_score"] is None else f"{a['z_score']:.2f}"
 
-    # Sort remaining alerts deterministically by absolute rupee impact
-    remaining_alerts.sort(key=lambda a: abs(a["delta_inr"]), reverse=True)
-
-    final_alerts = canonical_alerts + remaining_alerts
-    for i, a in enumerate(final_alerts):
-        a["id"] = f"A{i+1}"
-        a["delta_fmt"] = fmt_inr(a["delta_inr"])
-        a["current_fmt"] = fmt_inr(a["current"])
-        a["baseline_fmt"] = fmt_inr(a["baseline_mean"])
-        a["pct_fmt"] = ("n/a (no baseline)" if a["pct_change"] is None
-                        else f"{a['pct_change']*100:+.1f}%")
-        a["z_fmt"] = "n/a" if a["z_score"] is None else f"{a['z_score']:.2f}"
-    return final_alerts, cur_week
+    return alerts, cur_week
 
 
 # ------------------------------------------------------- Step 3: Fast Path --
