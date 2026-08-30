@@ -15,66 +15,21 @@ class AnalysisService:
         self.decisions = decisions or DecisionRepository(get_settings().decisions_path)
         self._dashboard: dict[str, Any] | None = None
 
-    def _prioritize_alerts_for_persona(self, alerts_list: list[dict[str, Any]], persona: str) -> list[dict[str, Any]]:
-        """
-        Applies persona-specific prioritization lens to the common alert pool.
-        Category Manager Lens: Prioritizes operational velocity & driver severity:
-          1. Units Sold
-          2. Stockout Incident Days
-          3. Average Realized Price
-          4. Revenue
-          5. Marketing Spend
-        CXO Lens: Prioritizes strategic financial impact & enterprise risk:
-          1. Financial Impact (|delta_inr|)
-          2. Revenue
-          3. Marketing Spend
-          4. Average Realized Price
-          5. Stockout Incident Days
-          6. Units Sold
-        Analytical truth, evidence, and scores remain 100% identical.
-        """
-        if persona == "CXO":
-            kpi_rank = {
-                "Revenue": 1,
-                "Marketing Spend": 2,
-                "Average Realized Price": 3,
-                "Stockout Incident Days": 4,
-                "Units Sold": 5
-            }
-            return sorted(
-                alerts_list,
-                key=lambda item: (
-                    -abs(item.get("alert", {}).get("delta_inr", 0) or 0),
-                    kpi_rank.get(item.get("alert", {}).get("kpi"), 6)
-                )
-            )
-        else:
-            kpi_rank = {
-                "Units Sold": 1,
-                "Stockout Incident Days": 2,
-                "Average Realized Price": 3,
-                "Revenue": 4,
-                "Marketing Spend": 5
-            }
-            return sorted(
-                alerts_list,
-                key=lambda item: (
-                    kpi_rank.get(item.get("alert", {}).get("kpi"), 6),
-                    -abs(item.get("alert", {}).get("delta_inr", 0) or 0)
-                )
-            )
-
     def dashboard(self, refresh: bool = False, persona: str = "Category Manager") -> dict[str, Any]:
         if self._dashboard is None or refresh:
             self._dashboard = self.pipeline.execute()
-        
-        # Always dynamically re-read decisions.csv on every dashboard call
+
         handled_ids = self.decisions.get_handled_alert_ids()
-        if self._dashboard and "alerts" in self._dashboard:
-            filtered_alerts = [a for a in self._dashboard["alerts"] if str(a.get("alert", {}).get("id")) not in handled_ids]
-            prioritized = self._prioritize_alerts_for_persona(filtered_alerts, persona)
+        if self._dashboard:
+            # Select persona-specific alert queue from backend KPI monitoring layer
+            if persona == "CXO":
+                raw_alerts = self._dashboard.get("cxo_alerts", self._dashboard.get("alerts", []))
+            else:
+                raw_alerts = self._dashboard.get("category_alerts", self._dashboard.get("alerts", []))
+
+            filtered = [a for a in raw_alerts if str(a.get("alert", {}).get("id")) not in handled_ids]
             res = dict(self._dashboard)
-            res["alerts"] = prioritized
+            res["alerts"] = filtered
             res["active_persona"] = persona
             return res
 
@@ -82,10 +37,16 @@ class AnalysisService:
 
     def get_alert(self, alert_id: str) -> dict[str, Any]:
         raw_dash = self.pipeline.execute()
-        result = self.alerts.find(raw_dash, alert_id)
-        if result is None:
+        # Search across all persona alert pools and canonical scenario alerts
+        all_pools = (
+            raw_dash.get("alerts", []) +
+            raw_dash.get("category_alerts", []) +
+            raw_dash.get("cxo_alerts", [])
+        )
+        match = next((item for item in all_pools if str(item.get("alert", {}).get("id")) == str(alert_id)), None)
+        if match is None:
             raise KeyError(alert_id)
-        return result
+        return match
 
     def investigate_alert(self, alert_id: str, persona: str) -> dict[str, Any]:
         """Investigate alert and determine path type (FAST/SLOW/ABSTAIN)."""

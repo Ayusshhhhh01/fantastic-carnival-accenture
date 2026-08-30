@@ -128,37 +128,44 @@ def test_old_decisions_csv_backwards_compatibility(tmp_path):
     assert factor == 1.0
 
 
-def test_dashboard_contains_all_5_kpi_types():
-    """Verify AnalysisService dashboard contains all 5 KPI types and fails if only Revenue+Marketing Spend exist."""
-    from backend.app.services.analysis_service import AnalysisService
-    service = AnalysisService()
-    dash = service.dashboard(refresh=True, persona="Category Manager")
-    alerts = dash.get("alerts", [])
-    kpi_set = {a["alert"]["kpi"] for a in alerts}
-
-    expected_kpis = {"Revenue", "Marketing Spend", "Units Sold", "Average Realized Price", "Stockout Incident Days"}
-    missing = expected_kpis - kpi_set
-    assert not missing, f"Dashboard missing KPI types: {missing}. Present KPIs: {kpi_set}"
-    assert len(kpi_set) == 5, f"Expected 5 KPI types on dashboard, got {len(kpi_set)}: {kpi_set}"
-
-
-def test_persona_ordering_differs_between_category_manager_and_cxo():
-    """Verify that Category Manager and CXO personas order the SAME underlying alert pool differently."""
+def test_persona_kpi_portfolios_are_distinct():
+    """Verify AnalysisService returns genuinely distinct KPI alert portfolios for Category Manager vs CXO."""
     from backend.app.services.analysis_service import AnalysisService
     service = AnalysisService()
 
     cm_dash = service.dashboard(refresh=True, persona="Category Manager")
     cxo_dash = service.dashboard(refresh=True, persona="CXO")
 
-    cm_ids = [a["alert"]["id"] for a in cm_dash.get("alerts", [])]
-    cxo_ids = [a["alert"]["id"] for a in cxo_dash.get("alerts", [])]
+    cm_kpis = {a["alert"]["kpi"] for a in cm_dash.get("alerts", [])}
+    cxo_kpis = {a["alert"]["kpi"] for a in cxo_dash.get("alerts", [])}
 
-    # Same set of alert IDs
-    assert set(cm_ids) == set(cxo_ids)
+    # Verify Category Manager KPI portfolio contains operational/commercial KPIs
+    expected_cm_kpis = {"Units Sold", "Stockout Incident Days", "Average Realized Price", "Revenue", "Marketing Spend"}
+    assert cm_kpis.issubset(expected_cm_kpis), f"Category Manager alerts contain unexpected KPIs: {cm_kpis - expected_cm_kpis}"
 
-    # Different ordering
-    assert cm_ids != cxo_ids, "Category Manager and CXO must have different alert ordering based on persona lens!"
+    # Verify CXO KPI portfolio contains executive/financial KPIs
+    expected_cxo_kpis = {"Enterprise Portfolio Revenue", "Marketing ROI Efficiency", "Price Realization Pressure", "Enterprise Inventory Exposure Risk", "Portfolio Strategic Risk"}
+    assert cxo_kpis.issubset(expected_cxo_kpis), f"CXO alerts contain unexpected KPIs: {cxo_kpis - expected_cxo_kpis}"
 
-    # Category Manager top KPI should be an operational KPI (Units Sold / Stockout Incident Days / Average Realized Price)
-    cm_top_kpi = cm_dash["alerts"][0]["alert"]["kpi"]
-    assert cm_top_kpi in ("Units Sold", "Stockout Incident Days", "Average Realized Price"), f"Category Manager top KPI should be operational, got: {cm_top_kpi}"
+    # Verify KPI portfolios do not overlap
+    overlap = cm_kpis.intersection(cxo_kpis)
+    assert not overlap, f"Category Manager and CXO KPI portfolios must not share identical KPI names! Overlap: {overlap}"
+
+
+def test_shared_rca_engine_preserves_analytical_truth():
+    """Verify investigating a signal returns identical RCA evidence regardless of persona framing."""
+    from backend.app.services.analysis_service import AnalysisService
+    service = AnalysisService()
+
+    cm_investigation = service.investigate_alert("A1", persona="Category Manager")
+    cxo_investigation = service.investigate_alert("A1", persona="CXO")
+
+    # Analytical truth (hypotheses, confidence score, conflict state, route) must be 100% identical
+    assert cm_investigation["route"] == cxo_investigation["route"]
+    assert cm_investigation["confidence"]["score"] == cxo_investigation["confidence"]["score"]
+    assert len(cm_investigation["hypotheses"]) == len(cxo_investigation["hypotheses"])
+
+    for cm_h, cxo_h in zip(cm_investigation["hypotheses"], cxo_investigation["hypotheses"]):
+        assert cm_h["name"] == cxo_h["name"]
+        assert cm_h["score"] == cxo_h["score"]
+        assert cm_h["supported"] == cxo_h["supported"]

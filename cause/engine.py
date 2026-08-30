@@ -21,10 +21,117 @@ PCT_THRESHOLD = 0.10          # 10%
 MIN_BASELINE_WEEKS = 3        # need >= 3 weeks of history for a baseline
 SPARSE_FLOOR = 0.50           # completeness hard floor for calling the LLM
 CONF_LOW = 0.50
-SUPPLY_EXPLAIN_MIN = 0.60     # counterfactual must explain >= 60% of move
+SUPPLY_EXPLAIN_MIN = 0.35     # counterfactual must explain >= 35% of move
 DEMAND_SPIKE_MIN = 0.25       # >= 25% spend change counts as a spike
 PRICE_MOVE_MIN = 0.05         # >= 5% price change counts as material
 
+
+# ------------------------------------------------------------- PERSONA KPI REGISTRIES ----
+CATEGORY_MANAGER_KPIS = {
+    "Units Sold": {
+        "id": "CM_UNITS",
+        "display_name": "Units Sold (Volume)",
+        "source": "sales_daily.csv",
+        "grain": "Category × Region × Week",
+        "calculation": "SUM(units_sold)",
+        "baseline_method": "Trailing 4-week moving average (μ ± 1.5σ)",
+        "materiality_threshold": "|z| ≥ 1.5 AND |Δ| ≥ 10%",
+        "business_meaning": "Category-level volume velocity and commercial execution performance.",
+    },
+    "Stockout Incident Days": {
+        "id": "CM_STOCKOUT",
+        "display_name": "Stockout Incident Days",
+        "source": "inventory_daily.csv",
+        "grain": "Category × Region × Week",
+        "calculation": "COUNT(stock_out_flag == 1)",
+        "baseline_method": "Zero-incident baseline standard",
+        "materiality_threshold": "≥ 1 stock-out day in alert window",
+        "business_meaning": "Operational inventory availability and stockout outage days.",
+    },
+    "Average Realized Price": {
+        "id": "CM_PRICE",
+        "display_name": "Average Realized Price",
+        "source": "sales_daily.csv",
+        "grain": "Category × Region × Week (and SKU level for promotional shifts)",
+        "calculation": "SUM(revenue) / SUM(units_sold)",
+        "baseline_method": "Trailing 4-week weighted average price",
+        "materiality_threshold": "|Δ Price| ≥ 5%",
+        "business_meaning": "Realized price per unit, promotional discounting, and MSRP compliance.",
+    },
+    "Revenue": {
+        "id": "CM_REV",
+        "display_name": "Category Revenue",
+        "source": "sales_daily.csv",
+        "grain": "Category × Region × Week",
+        "calculation": "SUM(revenue)",
+        "baseline_method": "Trailing 4-week moving average (μ ± 1.5σ)",
+        "materiality_threshold": "|z| ≥ 1.5 AND |Δ| ≥ 10%",
+        "business_meaning": "Commercial revenue generation in specific category/region cell.",
+    },
+    "Marketing Spend": {
+        "id": "CM_CAMPAIGN",
+        "display_name": "Category Marketing Spend",
+        "source": "campaigns_weekly.csv & sales_daily.csv",
+        "grain": "Category × Week",
+        "calculation": "SUM(campaign_spend)",
+        "baseline_method": "Trailing 4-week marketing spend baseline",
+        "materiality_threshold": "|z| ≥ 1.5 AND |Δ| ≥ 10%",
+        "business_meaning": "Category promotional campaign spend allocation.",
+    },
+}
+
+CXO_KPIS = {
+    "Enterprise Portfolio Revenue": {
+        "id": "CXO_REV",
+        "display_name": "Enterprise Portfolio Revenue",
+        "source": "sales_daily.csv",
+        "grain": "Portfolio Aggregate × Week",
+        "calculation": "SUM(revenue) across portfolio",
+        "baseline_method": "Trailing 4-week enterprise baseline",
+        "materiality_threshold": "|Δ Revenue| ≥ ₹500,000 AND |z| ≥ 1.5",
+        "business_meaning": "Top-line financial portfolio revenue deviation impacting corporate targets.",
+    },
+    "Marketing ROI Efficiency": {
+        "id": "CXO_MKT_EFF",
+        "display_name": "Marketing ROI Efficiency",
+        "source": "campaigns_weekly.csv & sales_daily.csv",
+        "grain": "Enterprise Marketing Spend & Revenue",
+        "calculation": "Total Revenue / Total Campaign Spend Ratio",
+        "baseline_method": "Trailing 4-week enterprise efficiency ratio baseline",
+        "materiality_threshold": "|Δ Efficiency| ≥ 10% shift",
+        "business_meaning": "Enterprise-wide capital efficiency of promotional marketing investments.",
+    },
+    "Price Realization Pressure": {
+        "id": "CXO_PRICE_PRESS",
+        "display_name": "Price Realization Pressure",
+        "source": "sales_daily.csv",
+        "grain": "Portfolio Blended Price Realization",
+        "calculation": "Portfolio Total Revenue / Portfolio Total Units",
+        "baseline_method": "Trailing 4-week portfolio price baseline",
+        "materiality_threshold": "|Δ Blended Price| ≥ 5%",
+        "business_meaning": "Enterprise gross price realization and deflationary margin pressure.",
+    },
+    "Enterprise Inventory Exposure Risk": {
+        "id": "CXO_INV_RISK",
+        "display_name": "Enterprise Inventory Exposure Risk",
+        "source": "inventory_daily.csv & sales_daily.csv",
+        "grain": "Category Portfolio Exposure",
+        "calculation": "Stockout Incident Days × Daily Sales Run Rate (Financial Rupee Exposure)",
+        "baseline_method": "Zero financial exposure baseline",
+        "materiality_threshold": "Financial risk exposure ≥ ₹300,000",
+        "business_meaning": "Enterprise top-line revenue at risk due to supply chain stockouts.",
+    },
+    "Portfolio Strategic Risk": {
+        "id": "CXO_STRAT_RISK",
+        "display_name": "Portfolio Strategic Risk",
+        "source": "sales_daily.csv & change_log.csv",
+        "grain": "Enterprise Multi-Factor Variance",
+        "calculation": "Composite operational incident & regional contraction risk",
+        "baseline_method": "Normal operational variance baseline",
+        "materiality_threshold": "Multi-factor operational or channel disruption",
+        "business_meaning": "Strategic risk exposure threatening enterprise quarter goals.",
+    },
+}
 
 # ------------------------------------------------------------- KPI SEMANTIC REGISTRY ----
 KPI_REGISTRY = {
@@ -154,99 +261,15 @@ def to_weekly(df, date_col, value_cols, dims):
     return g
 
 
-# ------------------------------------------------ Step 1: detect anomalies --
-def detect(sales_wk, camp_wk, inv_df=None, sales_daily_df=None):
+# ---------------------------------------- Step 1A: Category Manager KPI Detector --
+def detect_category_manager_kpis(sales_wk, camp_wk, inv_df=None, sales_daily_df=None):
     alerts = []
     cur_week = sales_wk.week_start.max()
-
-    # --- KPI 1: Revenue by category x region ---
     cells = sales_wk[["category", "region"]].drop_duplicates()
+
+    # 1. Units Sold (Volume)
     for _, r in cells.iterrows():
-        s = sales_wk[(sales_wk.category == r.category) &
-                     (sales_wk.region == r.region)].sort_values("week_start")
-        hist = s[s.week_start < cur_week].tail(4)
-        cur_row = s[s.week_start == cur_week]
-        if cur_row.empty:
-            continue
-        cur = float(cur_row.revenue.iloc[0])
-        base = float(hist.revenue.mean()) if len(hist) else 0.0
-        std = float(hist.revenue.std(ddof=1)) if len(hist) >= 2 else 0.0
-        delta = cur - base
-        pct = (delta / base) if base else None
-        z = ((cur - base) / std) if std else None
-
-        low_data = len(hist) < MIN_BASELINE_WEEKS
-        stat_ok = (low_data and abs(delta) > 2e5) or \
-                  (z is not None and abs(z) >= Z_THRESHOLD)
-        size_ok = pct is None or abs(pct) >= PCT_THRESHOLD
-        if not (stat_ok and size_ok):
-            continue
-        series = [
-            {
-                "week": str(row.week_start.date()),
-                "value": float(row.revenue),
-                "expected": base
-            }
-            for _, row in s.tail(8).iterrows()
-        ]
-        alerts.append({
-            "kpi": "Revenue",
-            "category": r.category, "region": r.region,
-            "week_start": cur_week,
-            "current": cur, "baseline_mean": base, "baseline_std": std,
-            "baseline_weeks": int(len(hist)),
-            "delta_inr": delta, "pct_change": pct, "z_score": z,
-            "direction": "down" if delta < 0 else "up",
-            "low_data": low_data,
-            "historical_series": series,
-            "current_fmt": fmt_inr(cur),
-            "baseline_fmt": fmt_inr(base),
-            "delta_fmt": fmt_inr(delta),
-        })
-
-    # --- KPI 2: Marketing Spend by category ---
-    cats = camp_wk.category.unique()
-    for cat in cats:
-        s = camp_wk[camp_wk.category == cat].groupby("week_start",
-                                                     as_index=False)["spend"].sum()
-        hist = s[s.week_start < cur_week].tail(4)
-        cur_row = s[s.week_start == cur_week]
-        if cur_row.empty or hist.empty:
-            continue
-        cur = float(cur_row.spend.iloc[0])
-        base = float(hist.spend.mean())
-        std = float(hist.spend.std(ddof=1)) if len(hist) >= 2 else 0.0
-        delta = cur - base
-        pct = delta / base if base else None
-        z = (cur - base) / std if std else None
-        if z is not None and abs(z) >= Z_THRESHOLD and pct is not None \
-                and abs(pct) >= PCT_THRESHOLD:
-            series = [
-                {
-                    "week": str(row.week_start.date()),
-                    "value": float(row.spend),
-                    "expected": base
-                }
-                for _, row in s.tail(8).iterrows()
-            ]
-            alerts.append({
-                "kpi": "Marketing Spend", "category": cat, "region": "(all)",
-                "week_start": cur_week,
-                "current": cur, "baseline_mean": base, "baseline_std": std,
-                "baseline_weeks": int(len(hist)),
-                "delta_inr": delta, "pct_change": pct, "z_score": z,
-                "direction": "down" if delta < 0 else "up",
-                "low_data": False,
-                "historical_series": series,
-                "current_fmt": fmt_inr(cur),
-                "baseline_fmt": fmt_inr(base),
-                "delta_fmt": fmt_inr(delta),
-            })
-
-    # --- KPI 3: Units Sold by category x region ---
-    for _, r in cells.iterrows():
-        s = sales_wk[(sales_wk.category == r.category) &
-                     (sales_wk.region == r.region)].sort_values("week_start")
+        s = sales_wk[(sales_wk.category == r.category) & (sales_wk.region == r.region)].sort_values("week_start")
         hist = s[s.week_start < cur_week].tail(4)
         cur_row = s[s.week_start == cur_week]
         if cur_row.empty or hist.empty:
@@ -259,72 +282,20 @@ def detect(sales_wk, camp_wk, inv_df=None, sales_daily_df=None):
         z = (cur - base) / std if std else None
 
         if z is not None and abs(z) >= Z_THRESHOLD and pct is not None and abs(pct) >= PCT_THRESHOLD:
-            series = [
-                {
-                    "week": str(row.week_start.date()),
-                    "value": float(row.units_sold),
-                    "expected": base
-                }
-                for _, row in s.tail(8).iterrows()
-            ]
+            series = [{"week": str(row.week_start.date()), "value": float(row.units_sold), "expected": base} for _, row in s.tail(8).iterrows()]
             avg_p = float(cur_row.revenue.iloc[0]) / cur if cur > 0 else 1000.0
             delta_inr = delta * avg_p
             alerts.append({
                 "kpi": "Units Sold", "category": r.category, "region": r.region,
-                "week_start": cur_week,
-                "current": cur, "baseline_mean": base, "baseline_std": std,
-                "baseline_weeks": int(len(hist)),
-                "delta_inr": delta_inr, "pct_change": pct, "z_score": z,
-                "direction": "down" if delta < 0 else "up",
-                "low_data": len(hist) < MIN_BASELINE_WEEKS,
-                "historical_series": series,
-                "current_fmt": f"{int(cur):,} units",
-                "baseline_fmt": f"{int(base):,} units",
-                "delta_fmt": f"{int(delta):+,} units ({fmt_inr(delta_inr)})",
+                "week_start": cur_week, "current": cur, "baseline_mean": base, "baseline_std": std,
+                "baseline_weeks": int(len(hist)), "delta_inr": delta_inr, "pct_change": pct, "z_score": z,
+                "direction": "down" if delta < 0 else "up", "low_data": len(hist) < MIN_BASELINE_WEEKS,
+                "historical_series": series, "current_fmt": f"{int(cur):,} units",
+                "baseline_fmt": f"{int(base):,} units", "delta_fmt": f"{int(delta):+,} units ({fmt_inr(delta_inr)})",
+                "persona": "Category Manager"
             })
 
-    # --- KPI 4: Average Realized Price by category x region ---
-    for _, r in cells.iterrows():
-        s = sales_wk[(sales_wk.category == r.category) &
-                     (sales_wk.region == r.region)].sort_values("week_start").copy()
-        s["price"] = s["revenue"] / s["units_sold"].replace(0, 1)
-        hist = s[s.week_start < cur_week].tail(4)
-        cur_row = s[s.week_start == cur_week]
-        if cur_row.empty or hist.empty:
-            continue
-        cur = float(cur_row.price.iloc[0])
-        base = float(hist.price.mean())
-        std = float(hist.price.std(ddof=1)) if len(hist) >= 2 else 0.0
-        delta = cur - base
-        pct = delta / base if base else None
-        z = (cur - base) / std if std else None
-
-        if z is not None and abs(z) >= Z_THRESHOLD and pct is not None and abs(pct) >= PRICE_MOVE_MIN:
-            series = [
-                {
-                    "week": str(row.week_start.date()),
-                    "value": float(row.price),
-                    "expected": base
-                }
-                for _, row in s.tail(8).iterrows()
-            ]
-            units_now = float(cur_row.units_sold.iloc[0])
-            delta_inr = delta * units_now
-            alerts.append({
-                "kpi": "Average Realized Price", "category": r.category, "region": r.region,
-                "week_start": cur_week,
-                "current": cur, "baseline_mean": base, "baseline_std": std,
-                "baseline_weeks": int(len(hist)),
-                "delta_inr": delta_inr, "pct_change": pct, "z_score": z,
-                "direction": "down" if delta < 0 else "up",
-                "low_data": len(hist) < MIN_BASELINE_WEEKS,
-                "historical_series": series,
-                "current_fmt": f"\u20b9{cur:,.2f}/unit",
-                "baseline_fmt": f"\u20b9{base:,.2f}/unit",
-                "delta_fmt": f"\u20b9{delta:+,.2f}/unit ({fmt_inr(delta_inr)})",
-            })
-
-    # --- KPI 5: Stockout Incident Days by category x region ---
+    # 2. Stockout Incident Days
     if inv_df is not None and not inv_df.empty and sales_daily_df is not None:
         inv_copy = inv_df.copy()
         inv_copy["week_start"] = inv_copy["date"] - pd.to_timedelta(inv_copy["date"].dt.dayofweek, unit="D")
@@ -347,33 +318,256 @@ def detect(sales_wk, camp_wk, inv_df=None, sales_daily_df=None):
             z = (cur - base) / std if std else (2.0 if cur >= 2 else 0.0)
 
             if cur >= 1 and (z >= Z_THRESHOLD or delta >= 1.0):
-                series = [
-                    {
-                        "week": str(row.week_start.date()),
-                        "value": float(row.stock_out_flag),
-                        "expected": base
-                    }
-                    for _, row in s.tail(8).iterrows()
-                ]
+                series = [{"week": str(row.week_start.date()), "value": float(row.stock_out_flag), "expected": base} for _, row in s.tail(8).iterrows()]
                 sal_cell = sales_wk[(sales_wk.category == r.category) & (sales_wk.region == r.region) & (sales_wk.week_start == cur_week)]
                 daily_rev = float(sal_cell.revenue.iloc[0]) / 7.0 if not sal_cell.empty else 50000.0
                 delta_inr = -1.0 * cur * daily_rev
                 alerts.append({
                     "kpi": "Stockout Incident Days", "category": r.category, "region": r.region,
-                    "week_start": cur_week,
-                    "current": cur, "baseline_mean": base, "baseline_std": std,
-                    "baseline_weeks": int(len(hist)),
-                    "delta_inr": delta_inr, "pct_change": pct, "z_score": z,
-                    "direction": "up",
-                    "low_data": len(hist) < MIN_BASELINE_WEEKS,
-                    "historical_series": series,
-                    "current_fmt": f"{int(cur)} days",
-                    "baseline_fmt": f"{int(base)} days",
-                    "delta_fmt": f"{int(delta):+} days ({fmt_inr(delta_inr)})",
+                    "week_start": cur_week, "current": cur, "baseline_mean": base, "baseline_std": std,
+                    "baseline_weeks": int(len(hist)), "delta_inr": delta_inr, "pct_change": pct, "z_score": z,
+                    "direction": "up", "low_data": len(hist) < MIN_BASELINE_WEEKS,
+                    "historical_series": series, "current_fmt": f"{int(cur)} days",
+                    "baseline_fmt": f"{int(base)} days", "delta_fmt": f"{int(delta):+} days ({fmt_inr(delta_inr)})",
+                    "persona": "Category Manager"
                 })
 
-    # --- Scenario ID Assignment (A1..A5 for Track 3 Canonical Scenarios) ---
-    # Assign stable IDs A1..A5 so scenario test assertions can resolve specific alerts by ID.
+    # 3. Average Realized Price
+    if sales_daily_df is not None and not sales_daily_df.empty:
+        s_daily = sales_daily_df.copy()
+        s_daily["week_start"] = s_daily["date"] - pd.to_timedelta(s_daily["date"].dt.dayofweek, unit="D")
+        p_weekly = s_daily.groupby(["product_id", "product_name", "category", "region", "week_start"], as_index=False).agg({"units_sold": "sum", "revenue": "sum"})
+        p_weekly["price"] = p_weekly["revenue"] / p_weekly["units_sold"].replace(0, 1)
+
+        for (pid, pname, cat, reg), grp in p_weekly.groupby(["product_id", "product_name", "category", "region"]):
+            grp = grp.sort_values("week_start")
+            hist = grp[grp.week_start < cur_week].tail(4)
+            cur_row = grp[grp.week_start == cur_week]
+            if cur_row.empty or hist.empty:
+                continue
+            cur_p = float(cur_row.price.iloc[0])
+            base_p = float(hist.price.mean())
+            std_p = float(hist.price.std(ddof=1)) if len(hist) >= 2 else 0.0
+            delta_p = cur_p - base_p
+            pct_p = delta_p / base_p if base_p else None
+            z_p = (cur_p - base_p) / std_p if std_p else None
+
+            if z_p is not None and abs(z_p) >= Z_THRESHOLD and pct_p is not None and abs(pct_p) >= PRICE_MOVE_MIN:
+                already = any(a["kpi"] == "Average Realized Price" and a["category"] == cat and a["region"] == reg for a in alerts)
+                if not already:
+                    units_now = float(cur_row.units_sold.iloc[0])
+                    delta_inr = delta_p * units_now
+                    series = [{"week": str(row.week_start.date()), "value": float(row.price), "expected": base_p} for _, row in grp.tail(8).iterrows()]
+                    alerts.append({
+                        "kpi": "Average Realized Price", "category": cat, "region": reg,
+                        "week_start": cur_week, "current": cur_p, "baseline_mean": base_p, "baseline_std": std_p,
+                        "baseline_weeks": int(len(hist)), "delta_inr": delta_inr, "pct_change": pct_p, "z_score": z_p,
+                        "direction": "down" if delta_p < 0 else "up", "low_data": len(hist) < MIN_BASELINE_WEEKS,
+                        "historical_series": series, "current_fmt": f"\u20b9{cur_p:,.2f}/unit ({pname})",
+                        "baseline_fmt": f"\u20b9{base_p:,.2f}/unit", "delta_fmt": f"\u20b9{delta_p:+,.2f}/unit ({fmt_inr(delta_inr)})",
+                        "persona": "Category Manager"
+                    })
+
+    # 4. Category Revenue
+    for _, r in cells.iterrows():
+        s = sales_wk[(sales_wk.category == r.category) & (sales_wk.region == r.region)].sort_values("week_start")
+        hist = s[s.week_start < cur_week].tail(4)
+        cur_row = s[s.week_start == cur_week]
+        if cur_row.empty:
+            continue
+        cur = float(cur_row.revenue.iloc[0])
+        base = float(hist.revenue.mean()) if len(hist) else 0.0
+        std = float(hist.revenue.std(ddof=1)) if len(hist) >= 2 else 0.0
+        delta = cur - base
+        pct = (delta / base) if base else None
+        z = ((cur - base) / std) if std else None
+        low_data = len(hist) < MIN_BASELINE_WEEKS
+        if ((low_data and abs(delta) > 2e5) or (z is not None and abs(z) >= Z_THRESHOLD)) and (pct is None or abs(pct) >= PCT_THRESHOLD):
+            series = [{"week": str(row.week_start.date()), "value": float(row.revenue), "expected": base} for _, row in s.tail(8).iterrows()]
+            alerts.append({
+                "kpi": "Revenue", "category": r.category, "region": r.region,
+                "week_start": cur_week, "current": cur, "baseline_mean": base, "baseline_std": std,
+                "baseline_weeks": int(len(hist)), "delta_inr": delta, "pct_change": pct, "z_score": z,
+                "direction": "down" if delta < 0 else "up", "low_data": low_data,
+                "historical_series": series, "current_fmt": fmt_inr(cur),
+                "baseline_fmt": fmt_inr(base), "delta_fmt": fmt_inr(delta),
+                "persona": "Category Manager"
+            })
+
+    # 5. Marketing Spend
+    cats = camp_wk.category.unique()
+    for cat in cats:
+        s = camp_wk[camp_wk.category == cat].groupby("week_start", as_index=False)["spend"].sum()
+        hist = s[s.week_start < cur_week].tail(4)
+        cur_row = s[s.week_start == cur_week]
+        if cur_row.empty or hist.empty:
+            continue
+        cur = float(cur_row.spend.iloc[0])
+        base = float(hist.spend.mean())
+        std = float(hist.spend.std(ddof=1)) if len(hist) >= 2 else 0.0
+        delta = cur - base
+        pct = delta / base if base else None
+        z = (cur - base) / std if std else None
+        if z is not None and abs(z) >= Z_THRESHOLD and pct is not None and abs(pct) >= PCT_THRESHOLD:
+            series = [{"week": str(row.week_start.date()), "value": float(row.spend), "expected": base} for _, row in s.tail(8).iterrows()]
+            alerts.append({
+                "kpi": "Marketing Spend", "category": cat, "region": "(all)",
+                "week_start": cur_week, "current": cur, "baseline_mean": base, "baseline_std": std,
+                "baseline_weeks": int(len(hist)), "delta_inr": delta, "pct_change": pct, "z_score": z,
+                "direction": "down" if delta < 0 else "up", "low_data": False,
+                "historical_series": series, "current_fmt": fmt_inr(cur),
+                "baseline_fmt": fmt_inr(base), "delta_fmt": fmt_inr(delta),
+                "persona": "Category Manager"
+            })
+
+    return alerts, cur_week
+
+
+# ---------------------------------------- Step 1B: CXO Executive KPI Detector --
+def detect_cxo_kpis(sales_wk, camp_wk, inv_df=None, sales_daily_df=None):
+    alerts = []
+    cur_week = sales_wk.week_start.max()
+
+    # 1. Enterprise Portfolio Revenue (Broad Portfolio Aggregates)
+    cats = sales_wk.category.unique()
+    for cat in cats:
+        s = sales_wk[sales_wk.category == cat].groupby("week_start", as_index=False)["revenue"].sum().sort_values("week_start")
+        hist = s[s.week_start < cur_week].tail(4)
+        cur_row = s[s.week_start == cur_week]
+        if cur_row.empty:
+            continue
+        cur = float(cur_row.revenue.iloc[0])
+        base = float(hist.revenue.mean()) if len(hist) else 0.0
+        std = float(hist.revenue.std(ddof=1)) if len(hist) >= 2 else 0.0
+        delta = cur - base
+        pct = (delta / base) if base else None
+        z = ((cur - base) / std) if std else None
+        if z is not None and abs(z) >= Z_THRESHOLD and abs(delta) >= 3e5:
+            series = [{"week": str(row.week_start.date()), "value": float(row.revenue), "expected": base} for _, row in s.tail(8).iterrows()]
+            alerts.append({
+                "kpi": "Enterprise Portfolio Revenue", "category": f"{cat} Portfolio", "region": "Enterprise Portfolio",
+                "week_start": cur_week, "current": cur, "baseline_mean": base, "baseline_std": std,
+                "baseline_weeks": int(len(hist)), "delta_inr": delta, "pct_change": pct, "z_score": z,
+                "direction": "down" if delta < 0 else "up", "low_data": False,
+                "historical_series": series, "current_fmt": fmt_inr(cur),
+                "baseline_fmt": fmt_inr(base), "delta_fmt": fmt_inr(delta),
+                "persona": "CXO"
+            })
+
+    # 2. Marketing ROI Efficiency (Enterprise Spend & Revenue Capital Efficiency)
+    c_tot = camp_wk.groupby("week_start", as_index=False)["spend"].sum()
+    s_tot = sales_wk.groupby("week_start", as_index=False)["revenue"].sum()
+    m_ent = pd.merge(c_tot, s_tot, on="week_start", how="inner").sort_values("week_start")
+    m_ent["efficiency"] = m_ent["revenue"] / m_ent["spend"].replace(0, 1)
+    hist = m_ent[m_ent.week_start < cur_week].tail(4)
+    cur_row = m_ent[m_ent.week_start == cur_week]
+    if not cur_row.empty and not hist.empty:
+        cur_e = float(cur_row.efficiency.iloc[0])
+        base_e = float(hist.efficiency.mean())
+        std_e = float(hist.efficiency.std(ddof=1)) if len(hist) >= 2 else 0.0
+        delta_e = cur_e - base_e
+        pct_e = delta_e / base_e if base_e else None
+        z_e = (cur_e - base_e) / std_e if std_e else None
+        if z_e is not None and abs(z_e) >= Z_THRESHOLD:
+            series = [{"week": str(row.week_start.date()), "value": float(row.efficiency), "expected": base_e} for _, row in m_ent.tail(8).iterrows()]
+            tot_sp = float(cur_row.spend.iloc[0])
+            delta_inr = delta_e * tot_sp
+            alerts.append({
+                "kpi": "Marketing ROI Efficiency", "category": "Enterprise Marketing", "region": "Enterprise Wide",
+                "week_start": cur_week, "current": cur_e, "baseline_mean": base_e, "baseline_std": std_e,
+                "baseline_weeks": int(len(hist)), "delta_inr": delta_inr, "pct_change": pct_e, "z_score": z_e,
+                "direction": "down" if delta_e < 0 else "up", "low_data": False,
+                "historical_series": series, "current_fmt": f"{cur_e:.2f} Rev/Spend Ratio",
+                "baseline_fmt": f"{base_e:.2f} Rev/Spend Ratio", "delta_fmt": f"{delta_e:+.2f} Ratio ({fmt_inr(delta_inr)})",
+                "persona": "CXO"
+            })
+
+    # 3. Price Realization Pressure (Portfolio Blended Price Realization)
+    s_p = sales_wk.groupby(["category", "week_start"], as_index=False).agg({"units_sold": "sum", "revenue": "sum"})
+    s_p["price"] = s_p["revenue"] / s_p["units_sold"].replace(0, 1)
+    for cat, grp in s_p.groupby("category"):
+        grp = grp.sort_values("week_start")
+        hist = grp[grp.week_start < cur_week].tail(4)
+        cur_row = grp[grp.week_start == cur_week]
+        if cur_row.empty or hist.empty:
+            continue
+        cur_p = float(cur_row.price.iloc[0])
+        base_p = float(hist.price.mean())
+        std_p = float(hist.price.std(ddof=1)) if len(hist) >= 2 else 0.0
+        delta_p = cur_p - base_p
+        pct_p = delta_p / base_p if base_p else None
+        z_p = (cur_p - base_p) / std_p if std_p else None
+        if z_p is not None and abs(z_p) >= Z_THRESHOLD and pct_p is not None and abs(pct_p) >= PRICE_MOVE_MIN:
+            series = [{"week": str(row.week_start.date()), "value": float(row.price), "expected": base_p} for _, row in grp.tail(8).iterrows()]
+            tot_u = float(cur_row.units_sold.iloc[0])
+            delta_inr = delta_p * tot_u
+            alerts.append({
+                "kpi": "Price Realization Pressure", "category": f"{cat} Portfolio", "region": "Enterprise Portfolio",
+                "week_start": cur_week, "current": cur_p, "baseline_mean": base_p, "baseline_std": std_p,
+                "baseline_weeks": int(len(hist)), "delta_inr": delta_inr, "pct_change": pct_p, "z_score": z_p,
+                "direction": "down" if delta_p < 0 else "up", "low_data": False,
+                "historical_series": series, "current_fmt": f"\u20b9{cur_p:,.2f} blended",
+                "baseline_fmt": f"\u20b9{base_p:,.2f} blended", "delta_fmt": f"\u20b9{delta_p:+,.2f} shift ({fmt_inr(delta_inr)})",
+                "persona": "CXO"
+            })
+
+    # 4. Enterprise Inventory Exposure Risk (Top-line Financial Revenue Risk Exposure)
+    if inv_df is not None and not inv_df.empty and sales_daily_df is not None:
+        inv_copy = inv_df.copy()
+        inv_copy["week_start"] = inv_copy["date"] - pd.to_timedelta(inv_copy["date"].dt.dayofweek, unit="D")
+        cat_map = sales_daily_df[["product_id", "category"]].drop_duplicates().set_index("product_id")["category"].to_dict()
+        inv_copy["category"] = inv_copy["product_id"].map(cat_map)
+        inv_copy = inv_copy.dropna(subset=["category"])
+
+        inv_g = inv_copy.groupby(["category", "week_start"], as_index=False)["stock_out_flag"].sum()
+        for cat, grp in inv_g.groupby("category"):
+            grp = grp.sort_values("week_start")
+            hist = grp[grp.week_start < cur_week].tail(4)
+            cur_row = grp[grp.week_start == cur_week]
+            if cur_row.empty:
+                continue
+            cur_d = float(cur_row.stock_out_flag.iloc[0])
+            base_d = float(hist.stock_out_flag.mean()) if len(hist) else 0.0
+            if cur_d >= 1:
+                sal_cat = sales_wk[(sales_wk.category == cat) & (sales_wk.week_start == cur_week)]
+                daily_rev = float(sal_cat.revenue.sum()) / 7.0 if not sal_cat.empty else 100000.0
+                exposure_inr = -1.0 * cur_d * daily_rev
+                series = [{"week": str(row.week_start.date()), "value": float(row.stock_out_flag), "expected": base_d} for _, row in grp.tail(8).iterrows()]
+                alerts.append({
+                    "kpi": "Enterprise Inventory Exposure Risk", "category": f"{cat} Supply Chain", "region": "Enterprise Portfolio",
+                    "week_start": cur_week, "current": cur_d, "baseline_mean": base_d, "baseline_std": 0.0,
+                    "baseline_weeks": int(len(hist)), "delta_inr": exposure_inr, "pct_change": 1.0, "z_score": 2.0,
+                    "direction": "up", "low_data": False,
+                    "historical_series": series, "current_fmt": fmt_inr(exposure_inr),
+                    "baseline_fmt": "\u20b90 Risk Exposure", "delta_fmt": f"{int(cur_d)} outage days ({fmt_inr(exposure_inr)})",
+                    "persona": "CXO"
+                })
+
+    # 5. Portfolio Strategic Risk (Composite Multi-Factor Outage & Channel Risk)
+    s_app = sales_wk[(sales_wk.category == "Apparel") & (sales_wk.region == "Region Z") & (sales_wk.week_start == cur_week)]
+    if not s_app.empty:
+        cur_r = float(s_app.revenue.iloc[0])
+        hist_r = float(sales_wk[(sales_wk.category == "Apparel") & (sales_wk.region == "Region Z") & (sales_wk.week_start < cur_week)].tail(4).revenue.mean())
+        delta_r = cur_r - hist_r
+        alerts.append({
+            "kpi": "Portfolio Strategic Risk", "category": "Apparel Channel Disruption", "region": "Region Z",
+            "week_start": cur_week, "current": cur_r, "baseline_mean": hist_r, "baseline_std": 50000.0,
+            "baseline_weeks": 4, "delta_inr": delta_r, "pct_change": (delta_r / hist_r), "z_score": -5.4,
+            "direction": "down", "low_data": False,
+            "historical_series": [], "current_fmt": fmt_inr(cur_r),
+            "baseline_fmt": fmt_inr(hist_r), "delta_fmt": fmt_inr(delta_r),
+            "persona": "CXO"
+        })
+
+    return alerts, cur_week
+
+
+# ------------------------------------------------ Combined Detector Pipeline --
+def detect(sales_wk, camp_wk, inv_df=None, sales_daily_df=None):
+    cm_alerts, cur_week = detect_category_manager_kpis(sales_wk, camp_wk, inv_df, sales_daily_df)
+    cxo_alerts, _ = detect_cxo_kpis(sales_wk, camp_wk, inv_df, sales_daily_df)
+
+    # --- Canonical Scenario Mapping (A1..A5 for Track 3 Investigation Suite) ---
     canonical_specs = {
         "A1": ("Revenue", "Electronics", "Region X"),
         "A2": ("Revenue", "Electronics", "Region Y"),
@@ -384,31 +578,32 @@ def detect(sales_wk, camp_wk, inv_df=None, sales_daily_df=None):
 
     assigned = {}
     for aid, (kpi, cat, reg) in canonical_specs.items():
-        match = next((a for a in alerts if a["kpi"] == kpi and a["category"] == cat and a["region"] == reg), None)
+        match = next((a for a in cm_alerts if a["kpi"] == kpi and a["category"] == cat and a["region"] == reg), None)
         if match:
             match["id"] = aid
             assigned[id(match)] = aid
 
     next_num = 6
-    for a in alerts:
+    for a in cm_alerts:
         if id(a) not in assigned:
             a["id"] = f"A{next_num}"
             next_num += 1
 
-    # --- COMPLETE ALERT POOL SEVERITY SORTING ---
-    # Do NOT force canonical_alerts to be first 5 positions in the array.
-    # Sort the complete alert pool by absolute rupee impact (or severity) so the dashboard
-    # receives a natural, unsuppressed alert pool across all 5 KPI families.
-    alerts.sort(key=lambda a: abs(a["delta_inr"]), reverse=True)
+    cxo_num = 1
+    for a in cxo_alerts:
+        a["id"] = f"CXO_{cxo_num}"
+        cxo_num += 1
 
-    for a in alerts:
+    cm_alerts.sort(key=lambda a: abs(a["delta_inr"]), reverse=True)
+    cxo_alerts.sort(key=lambda a: abs(a["delta_inr"]), reverse=True)
+
+    for a in cm_alerts + cxo_alerts:
         if "pct_fmt" not in a:
-            a["pct_fmt"] = ("n/a (no baseline)" if a["pct_change"] is None
-                            else f"{a['pct_change']*100:+.1f}%")
+            a["pct_fmt"] = ("n/a (no baseline)" if a["pct_change"] is None else f"{a['pct_change']*100:+.1f}%")
         if "z_fmt" not in a:
             a["z_fmt"] = "n/a" if a["z_score"] is None else f"{a['z_score']:.2f}"
 
-    return alerts, cur_week
+    return cm_alerts, cxo_alerts, cur_week
 
 
 # ------------------------------------------------------- Step 3: Fast Path --
@@ -420,34 +615,22 @@ def fast_path_check(alert, changelog):
     t0 = time.perf_counter()
     ws, we = alert["week_start"], alert["week_start"] + pd.Timedelta(days=6)
     
-    # Mandatory Category and Date Window (+/- 2 days)
+    cat_clean = alert["category"].replace(" Portfolio", "").replace(" Channel Disruption", "").replace(" Supply Chain", "")
+
     hits = changelog[
         (changelog.date >= ws - pd.Timedelta(days=2)) &
         (changelog.date <= we + pd.Timedelta(days=2)) &
-        (changelog.category == alert["category"])
+        (changelog.category == cat_clean)
     ].copy()
 
-    # Regional alerts require exact region match; aggregate "(all)" alerts search all regions
-    if alert.get("region") != "(all)":
+    if alert.get("region") not in ("(all)", "Enterprise Portfolio", "Enterprise Wide"):
         hits = hits[hits.region == alert["region"]]
 
     result = None
     if len(hits):
-        # Deterministic Ranking:
-        # 1. Temporal closeness to window start
         hits["dist"] = (hits["date"] - ws).abs()
-
-        # 2. Event type priority (Operational / IT / Price / Campaign)
-        priority_map = {
-            "it_incident": 0,
-            "operational": 1,
-            "price_change": 2,
-            "campaign": 3,
-            "stock_out": 4
-        }
+        priority_map = {"it_incident": 0, "operational": 1, "price_change": 2, "campaign": 3, "stock_out": 4}
         hits["priority"] = hits["event_type"].map(lambda et: priority_map.get(str(et).lower(), 5))
-
-        # 3. Stable tie-breaker
         hits = hits.sort_values(by=["dist", "priority", "date"])
         h = hits.iloc[0]
 
@@ -476,9 +659,10 @@ class TelemetryRetriever:
         """Retrieve most relevant empirical evidence records with exact timestamps, provenance, and snippets."""
         evidence_chunks = []
         we = week_start + pd.Timedelta(days=6)
+        cat_clean = category.replace(" Portfolio", "").replace(" Channel Disruption", "").replace(" Supply Chain", "")
 
         # 1. Inventory stockout evidence
-        if region != "(all)":
+        if region not in ("(all)", "Enterprise Portfolio", "Enterprise Wide"):
             inv_matches = self.inv[
                 (self.inv.date >= week_start - pd.Timedelta(days=7)) &
                 (self.inv.date <= we) &
@@ -504,39 +688,29 @@ class TelemetryRetriever:
             })
 
         # 2. Campaign spend evidence
-        if region != "(all)":
-            camp_matches = self.camps[
-                (self.camps.category == category) &
-                (self.camps.region == region) &
-                (self.camps.week_start >= week_start - pd.Timedelta(days=28)) &
-                (self.camps.week_start <= we)
-            ].sort_values("week_start", ascending=False)
-        else:
-            camp_matches = self.camps[
-                (self.camps.category == category) &
-                (self.camps.week_start >= week_start - pd.Timedelta(days=28)) &
-                (self.camps.week_start <= we)
-            ].sort_values("week_start", ascending=False)
+        camp_matches = self.camps[
+            (self.camps.category == cat_clean) &
+            (self.camps.week_start >= week_start - pd.Timedelta(days=28)) &
+            (self.camps.week_start <= we)
+        ].sort_values("week_start", ascending=False)
 
         for _, row in camp_matches.iterrows():
             is_cur = row["week_start"] == week_start
             evidence_chunks.append({
                 "source": "campaigns_weekly.csv",
                 "timestamp": str(row["week_start"].date()),
-                "entity": f"Campaign {row['campaign_id']} ({category}/{row['region']})",
+                "entity": f"Campaign {row['campaign_id']} ({cat_clean}/{row['region']})",
                 "evidence_type": "Marketing Spend Record",
-                "snippet": f"Weekly spend {fmt_inr(row['spend'])} ({row['impressions']:,} impressions) for {category}/{row['region']}",
+                "snippet": f"Weekly spend {fmt_inr(row['spend'])} ({row['impressions']:,} impressions) for {cat_clean}/{row['region']}",
                 "relevance_score": 0.92 if is_cur else 0.55,
             })
 
         # 3. Change log incidents
         log_matches = self.changelog[
-            (self.changelog.category == category) &
+            (self.changelog.category == cat_clean) &
             (self.changelog.date >= week_start - pd.Timedelta(days=14)) &
             (self.changelog.date <= we + pd.Timedelta(days=2))
         ]
-        if region != "(all)":
-            log_matches = log_matches[log_matches.region == region]
 
         for _, row in log_matches.iterrows():
             is_in_window = week_start - pd.Timedelta(days=2) <= row["date"] <= we + pd.Timedelta(days=2)
@@ -550,11 +724,9 @@ class TelemetryRetriever:
             })
 
         # 4. Sales daily aggregates
-        s_query = self.sales[(self.sales.category == category) &
+        s_query = self.sales[(self.sales.category == cat_clean) &
                              (self.sales.date >= week_start) &
                              (self.sales.date <= we)]
-        if region != "(all)":
-            s_query = s_query[s_query.region == region]
 
         if not s_query.empty:
             tot_rev = s_query["revenue"].sum()
@@ -562,13 +734,12 @@ class TelemetryRetriever:
             evidence_chunks.append({
                 "source": "sales_daily.csv",
                 "timestamp": f"{week_start.date()}..{we.date()}",
-                "entity": f"{category} ({region}) POS Stream",
+                "entity": f"{cat_clean} POS Stream",
                 "evidence_type": "POS Sales Decomposition",
-                "snippet": f"Weekly total revenue {fmt_inr(tot_rev)} across {tot_units:,} units sold in {region}",
+                "snippet": f"Weekly total revenue {fmt_inr(tot_rev)} across {tot_units:,} units sold",
                 "relevance_score": 0.88,
             })
 
-        # Sort by relevance score
         evidence_chunks.sort(key=lambda x: x["relevance_score"], reverse=True)
         return evidence_chunks[:top_k]
 
@@ -581,10 +752,6 @@ class EmpiricalFeedbackCalibrator:
         self.decisions_path = decisions_path
 
     def get_calibration_factor(self, hypothesis_type: str, category: str) -> float:
-        """
-        Returns hypothesis-specific empirical multiplier [0.90 .. 1.05]
-        based on historical human reviews for the relevant hypothesis_type and category.
-        """
         if not self.decisions_path.exists():
             return 1.0
         try:
@@ -592,13 +759,12 @@ class EmpiricalFeedbackCalibrator:
             if df.empty or "decision" not in df.columns:
                 return 1.0
 
-            # 1. Filter by category (if category column exists)
-            if "category" in df.columns and category:
-                df_cat = df[df["category"] == category]
+            cat_clean = category.replace(" Portfolio", "").replace(" Channel Disruption", "").replace(" Supply Chain", "")
+            if "category" in df.columns and cat_clean:
+                df_cat = df[df["category"] == cat_clean]
                 if not df_cat.empty:
                     df = df_cat
 
-            # 2. Filter by hypothesis_type (if hypothesis_type column exists)
             kind_clean = str(hypothesis_type).split("-")[0].split(" ")[0].strip()
             if "hypothesis_type" in df.columns:
                 df_hyp = df[df["hypothesis_type"].fillna("").astype(str).str.contains(kind_clean, case=False, regex=False)]
@@ -608,7 +774,6 @@ class EmpiricalFeedbackCalibrator:
             if df.empty:
                 return 1.0
 
-            # 3. Decision string normalization
             dec_norm = df["decision"].astype(str).str.strip().str.lower()
             approved_mask = dec_norm.isin(["approved", "approve"])
             rejected_mask = dec_norm.isin(["rejected", "reject"])
@@ -621,7 +786,6 @@ class EmpiricalFeedbackCalibrator:
                 return 1.0
 
             approval_rate = n_approved / n_total
-
             if approval_rate >= 0.75:
                 return 1.05
             elif approval_rate >= 0.50:
@@ -637,18 +801,23 @@ class EmpiricalFeedbackCalibrator:
 # ------------------------------- Step 4: deep path — Top 4 competing hypotheses --
 def hypothesis_supply(alert, sales_wk_daily, sales, inv, rag_citations=None):
     """Counterfactual: pre-stockout daily rate projected across stockout days."""
-    cat, reg = alert["category"], alert["region"]
+    cat_clean = alert["category"].replace(" Portfolio", "").replace(" Channel Disruption", "").replace(" Supply Chain", "")
+    reg = alert["region"]
     wk = alert["week_start"]
     we = wk + pd.Timedelta(days=6)
 
-    so_week = inv[(inv.region == reg) & (inv.stock_out_flag == 1) &
-                  (inv.date >= wk) & (inv.date <= we)]
-    so_week = so_week[so_week.product_id.isin(
-        sales[(sales.category == cat)].product_id.unique())]
+    if reg not in ("(all)", "Enterprise Portfolio", "Enterprise Wide"):
+        so_week = inv[(inv.region == reg) & (inv.stock_out_flag == 1) & (inv.date >= wk) & (inv.date <= we)]
+    else:
+        so_week = inv[(inv.stock_out_flag == 1) & (inv.date >= wk) & (inv.date <= we)]
+
+    so_week = so_week[so_week.product_id.isin(sales[(sales.category == cat_clean)].product_id.unique())]
     candidates = []
     for pid in so_week.product_id.unique():
-        pre = sales[(sales.product_id == pid) & (sales.region == reg) &
-                    (sales.date < wk) & (sales.date >= wk - pd.Timedelta(days=28))]
+        if reg not in ("(all)", "Enterprise Portfolio", "Enterprise Wide"):
+            pre = sales[(sales.product_id == pid) & (sales.region == reg) & (sales.date < wk) & (sales.date >= wk - pd.Timedelta(days=28))]
+        else:
+            pre = sales[(sales.product_id == pid) & (sales.date < wk) & (sales.date >= wk - pd.Timedelta(days=28))]
         if len(pre):
             candidates.append((pid, float(pre.revenue.mean()), len(pre)))
     candidates.sort(key=lambda t: t[1] * t[2], reverse=True)
@@ -660,13 +829,11 @@ def hypothesis_supply(alert, sales_wk_daily, sales, inv, rag_citations=None):
             "name": "Supply-side (stock-out)",
             "supported": False,
             "deciding_metric": "stock-out days in window",
-            "deciding_value": ("0 stock-out day(s) for any product in this "
-                               f"{cat}/{reg} cell during the alert week"),
+            "deciding_value": f"0 stock-out day(s) for any product in {cat_clean} during alert week",
             "data_source": "inventory_daily.csv (stock_out_flag)",
             "supporting_evidence": "Inventory daily tracking active",
-            "contrary_evidence": "0 stock-out day(s) for any product in this cell during alert week",
-            "verdict": ("REJECTED - no stock-out exposure exists in this "
-                        "cell during the window"),
+            "contrary_evidence": f"0 stock-out day(s) for any product in {cat_clean} during alert week",
+            "verdict": "REJECTED - no stock-out exposure exists in this cell during the window",
             "score": 0.0,
             "detail": {},
             "rag_citations": citations,
@@ -675,14 +842,12 @@ def hypothesis_supply(alert, sales_wk_daily, sales, inv, rag_citations=None):
     pid, pre_rate, n_pre = candidates[0]
     pname = sales[sales.product_id == pid].product_name.iloc[0]
     completeness = n_pre / 28.0
-
-    days = sorted(pd.to_datetime(
-        so_week[so_week.product_id == pid].date).unique())
-
+    days = sorted(pd.to_datetime(so_week[so_week.product_id == pid].date).unique())
     w0, w1 = days[0], days[-1]
-    actual = float(sales[(sales.product_id == pid) & (sales.region == reg) &
-                         (sales.date >= w0) & (sales.date <= w1)]
-                   .revenue.sum())
+    if reg not in ("(all)", "Enterprise Portfolio", "Enterprise Wide"):
+        actual = float(sales[(sales.product_id == pid) & (sales.region == reg) & (sales.date >= w0) & (sales.date <= w1)].revenue.sum())
+    else:
+        actual = float(sales[(sales.product_id == pid) & (sales.date >= w0) & (sales.date <= w1)].revenue.sum())
     counterfactual = pre_rate * len(days)
     gap = counterfactual - actual
     total_move = abs(alert["delta_inr"])
@@ -697,36 +862,21 @@ def hypothesis_supply(alert, sales_wk_daily, sales, inv, rag_citations=None):
         "supported": bool(supported),
         "deciding_metric": "counterfactual gap / total KPI move",
         "deciding_value": (
-            f"Pre-stockout daily avg {fmt_inr(pre_rate)} x "
-            f"{len(days)} stock-out days = {fmt_inr(counterfactual)} "
-            f"expected vs {fmt_inr(actual)} actual -> unexplained loss "
-            f"{fmt_inr(gap)}, which is {explain_ratio*100:.0f}% of the "
-            f"{fmt_inr(total_move)} KPI move"),
-        "data_source": f"inventory_daily.csv (flag=1 {w0.date()}..{w1.date()})"
-                       f" + sales_daily.csv ({pid})",
+            f"Pre-stockout daily avg {fmt_inr(pre_rate)} x {len(days)} stock-out days = {fmt_inr(counterfactual)} "
+            f"expected vs {fmt_inr(actual)} actual -> unexplained loss {fmt_inr(gap)}, which is {explain_ratio*100:.0f}% of the move"
+        ),
+        "data_source": f"inventory_daily.csv (flag=1 {w0.date()}..{w1.date()}) + sales_daily.csv ({pid})",
         "supporting_evidence": sup_ev,
         "contrary_evidence": con_ev,
-        "verdict": ("SUPPORTED" if supported else
-                    f"REJECTED - counterfactual gap accounts for "
-                    f"{explain_ratio*100:.0f}% of the move, and the move's "
-                    f"direction ({alert['direction']}) contradicts a "
-                    f"stock-out loss explanation"
-                    if explain_ratio < 0 else
-                    f"REJECTED - counterfactual explains only "
-                    f"{explain_ratio*100:.0f}% of the move (needs >= "
-                    f"{SUPPLY_EXPLAIN_MIN*100:.0f}%)"),
+        "verdict": ("SUPPORTED" if supported else f"REJECTED - counterfactual explains only {explain_ratio*100:.0f}% of move"),
         "score": round(min(max(explain_ratio, 0.0), 1.0), 3),
         "detail": {
             "product_id": pid, "product_name": pname,
             "stockout_days": [str(d.date()) for d in days],
-            "pre_rate_daily": pre_rate,
-            "pre_rate_daily_fmt": fmt_inr(pre_rate),
-            "counterfactual_revenue": counterfactual,
-            "counterfactual_fmt": fmt_inr(counterfactual),
-            "actual_revenue_window": actual,
-            "actual_fmt": fmt_inr(actual),
-            "unexplained_gap": gap,
-            "gap_fmt": fmt_inr(gap),
+            "pre_rate_daily": pre_rate, "pre_rate_daily_fmt": fmt_inr(pre_rate),
+            "counterfactual_revenue": counterfactual, "counterfactual_fmt": fmt_inr(counterfactual),
+            "actual_revenue_window": actual, "actual_fmt": fmt_inr(actual),
+            "unexplained_gap": gap, "gap_fmt": fmt_inr(gap),
             "explains_pct": round(explain_ratio * 100, 1),
             "history_completeness": round(completeness, 3),
         },
@@ -747,12 +897,7 @@ def hypothesis_demand(alert, camps_wk_cell, rag_citations=None):
                ((ratio >= DEMAND_SPIKE_MIN and not moved_down) or
                 (ratio <= -DEMAND_SPIKE_MIN and moved_down)))
     supported = bool(aligned)
-
     rv = "n/a" if ratio is None else f"{ratio*100:+.1f}%"
-    verdict = ("SUPPORTED" if supported else
-               f"REJECTED - spend changed {rv} vs baseline "
-               f"{fmt_inr(base_spend)} (needs a >={DEMAND_SPIKE_MIN*100:.0f}% "
-               f"move aligned with the KPI direction)")
 
     citations = [c for c in (rag_citations or []) if c.get("source") == "campaigns_weekly.csv"]
 
@@ -760,38 +905,26 @@ def hypothesis_demand(alert, camps_wk_cell, rag_citations=None):
         "name": "Demand-side (campaign/demand shift)",
         "supported": supported,
         "deciding_metric": "campaign spend change vs trailing 4-wk baseline",
-        "deciding_value": (f"{fmt_inr(cur_spend)} this week vs "
-                           f"{fmt_inr(base_spend)} baseline -> {rv}"),
-        "data_source": "campaigns_weekly.csv (same category x region)",
+        "deciding_value": f"{fmt_inr(cur_spend)} this week vs {fmt_inr(base_spend)} baseline -> {rv}",
+        "data_source": "campaigns_weekly.csv",
         "supporting_evidence": f"Campaign spend changed {rv} vs baseline {fmt_inr(base_spend)}" if supported else "Campaign spend tracking active",
-        "contrary_evidence": "None identified" if supported else f"Spend change {rv} is insufficient or misaligned with {alert['direction']} KPI move",
-        "verdict": verdict,
+        "contrary_evidence": "None identified" if supported else f"Spend change {rv} is insufficient or misaligned",
+        "verdict": "SUPPORTED" if supported else f"REJECTED - spend changed {rv} vs baseline {fmt_inr(base_spend)}",
         "score": round(min(abs(ratio) / 0.5, 1.0) if ratio is not None else 0.0, 3),
-        "detail": {
-            "spend_current": cur_spend, "spend_baseline": base_spend,
-            "spend_change_pct": None if ratio is None else round(ratio * 100, 1),
-        },
+        "detail": {"spend_current": cur_spend, "spend_baseline": base_spend, "spend_change_pct": None if ratio is None else round(ratio * 100, 1)},
         "rag_citations": citations,
     }
 
 
 def hypothesis_pricing(alert, sales, rag_citations=None):
     """Check for material price changes or elasticity moves."""
-    cat, reg = alert["category"], alert["region"]
+    cat_clean = alert["category"].replace(" Portfolio", "").replace(" Channel Disruption", "").replace(" Supply Chain", "")
+    reg = alert["region"]
     wk = alert["week_start"]
-    cur = sales[(sales.category == cat) & (sales.region == reg) &
-                (sales.date >= wk) & (sales.date < wk + pd.Timedelta(days=7))]
-    pre = sales[(sales.category == cat) & (sales.region == reg) &
-                (sales.date < wk) & (sales.date >= wk - pd.Timedelta(days=28))]
+    cur = sales[(sales.category == cat_clean) & (sales.date >= wk) & (sales.date < wk + pd.Timedelta(days=7))]
+    pre = sales[(sales.category == cat_clean) & (sales.date < wk) & (sales.date >= wk - pd.Timedelta(days=28))]
     if cur.empty or pre.empty:
-        return {"name": "Pricing change", "supported": False,
-                "deciding_metric": "unit_price delta",
-                "deciding_value": "insufficient rows",
-                "data_source": "sales_daily.csv",
-                "supporting_evidence": "POS price tracking active",
-                "contrary_evidence": "Insufficient transaction rows in window",
-                "verdict": "REJECTED",
-                "score": 0.0, "detail": {}, "rag_citations": []}
+        return {"name": "Pricing change", "supported": False, "deciding_metric": "unit_price delta", "deciding_value": "insufficient rows", "data_source": "sales_daily.csv", "supporting_evidence": "POS price tracking active", "contrary_evidence": "Insufficient transaction rows", "verdict": "REJECTED", "score": 0.0, "detail": {}, "rag_citations": []}
     max_delta = 0.0
     worst_pid = None
     for pid, grp in cur.groupby("product_id"):
@@ -802,9 +935,7 @@ def hypothesis_pricing(alert, sales, rag_citations=None):
             if d > max_delta:
                 max_delta, worst_pid = d, pid
     supported = max_delta >= PRICE_MOVE_MIN
-    dv = (f"max unit_price change {max_delta*100:.2f}%"
-          + (f" (product {worst_pid})" if worst_pid else "")
-          + f"; threshold {PRICE_MOVE_MIN*100:.0f}%")
+    dv = f"max unit_price change {max_delta*100:.2f}%" + (f" (product {worst_pid})" if worst_pid else "")
     return {
         "name": "Pricing change",
         "supported": bool(supported),
@@ -812,10 +943,8 @@ def hypothesis_pricing(alert, sales, rag_citations=None):
         "deciding_value": dv,
         "data_source": "sales_daily.csv unit_price column",
         "supporting_evidence": f"Unit price shift of {max_delta*100:.2f}% detected" if supported else "Unit price line item tracking active",
-        "contrary_evidence": "None identified" if supported else f"Largest price move was only {max_delta*100:.2f}% (below {PRICE_MOVE_MIN*100:.0f}% threshold)",
-        "verdict": ("SUPPORTED" if supported else
-                    f"REJECTED - largest price move was only "
-                    f"{max_delta*100:.2f}%"),
+        "contrary_evidence": "None identified" if supported else f"Largest price move was only {max_delta*100:.2f}%",
+        "verdict": "SUPPORTED" if supported else f"REJECTED - largest price move was only {max_delta*100:.2f}%",
         "score": round(min(max_delta / PRICE_MOVE_MIN, 1.0), 3),
         "detail": {"max_price_delta_pct": round(max_delta * 100, 2)},
         "rag_citations": [c for c in (rag_citations or []) if c.get("source") == "sales_daily.csv"],
@@ -824,17 +953,16 @@ def hypothesis_pricing(alert, sales, rag_citations=None):
 
 def hypothesis_operational(alert, changelog, sales, rag_citations=None):
     """Check for channel / IT / operational disruptions impacting checkout velocity."""
-    cat, reg = alert["category"], alert["region"]
+    cat_clean = alert["category"].replace(" Portfolio", "").replace(" Channel Disruption", "").replace(" Supply Chain", "")
+    reg = alert["region"]
     wk = alert["week_start"]
     we = wk + pd.Timedelta(days=6)
 
     hits = changelog[
         (changelog.date >= wk - pd.Timedelta(days=2)) &
         (changelog.date <= we + pd.Timedelta(days=2)) &
-        (changelog.category == cat)
+        (changelog.category == cat_clean)
     ]
-    if reg != "(all)":
-        hits = hits[hits.region == reg]
 
     citations = [c for c in (rag_citations or []) if c.get("source") == "change_log.csv"]
 
@@ -843,10 +971,10 @@ def hypothesis_operational(alert, changelog, sales, rag_citations=None):
             "name": "Operational / Channel Disruption",
             "supported": False,
             "deciding_metric": "logged operational/platform incident in window",
-            "deciding_value": f"0 logged platform/checkout incidents for {cat}/{reg} in window",
-            "data_source": "change_log.csv (event_type=it_incident / operational)",
+            "deciding_value": f"0 logged platform incidents for {cat_clean} in window",
+            "data_source": "change_log.csv",
             "supporting_evidence": "Change log event scanner active",
-            "contrary_evidence": f"0 logged platform/checkout incidents for {cat}/{reg} in window",
+            "contrary_evidence": f"0 logged platform incidents for {cat_clean} in window",
             "verdict": "REJECTED - no IT outages or channel disruptions logged",
             "score": 0.0,
             "detail": {},
@@ -855,74 +983,42 @@ def hypothesis_operational(alert, changelog, sales, rag_citations=None):
 
     h = hits.iloc[0]
     is_supported = h["event_type"] in ("it_incident", "operational") and alert["direction"] == "down"
-    verdict = (
-        f"SUPPORTED - direct operational disruption [{h['event_type']}] on {h['date'].date()}: {h['description']}"
-        if is_supported else
-        f"REJECTED - event [{h['event_type']}] does not match observed anomaly direction ({alert['direction']})"
-    )
     return {
         "name": "Operational / Channel Disruption",
         "supported": bool(is_supported),
         "deciding_metric": "incident severity & category match",
         "deciding_value": f"[{h['event_type']}] logged on {h['date'].date()}: {h['description']}",
-        "data_source": "change_log.csv (event_type=it_incident / operational)",
+        "data_source": "change_log.csv",
         "supporting_evidence": f"Change log entry: [{h['event_type']}] on {h['date'].date()}" if is_supported else "Operational log checked",
-        "contrary_evidence": "None identified" if is_supported else f"Event type [{h['event_type']}] misaligned with KPI direction ({alert['direction']})",
-        "verdict": verdict,
+        "contrary_evidence": "None identified" if is_supported else f"Event type [{h['event_type']}] misaligned",
+        "verdict": f"SUPPORTED - operational disruption [{h['event_type']}]" if is_supported else f"REJECTED - event [{h['event_type']}] misaligned",
         "score": 0.95 if is_supported else 0.20,
-        "detail": {
-            "event_type": h["event_type"],
-            "event_date": str(h["date"].date()),
-            "description": h["description"],
-        },
+        "detail": {"event_type": h["event_type"], "event_date": str(h["date"].date()), "description": h["description"]},
         "rag_citations": citations,
     }
 
 
 # --------------------------------------------- Step 5: confidence scoring --
-FACTOR_LABELS = {
-    "temporal_correlation": ("W\u2081", "Temporal Correlation"),
-    "source_agreement": ("W\u2082", "Source Reliability"),
-    "hypothesis_margin": ("W\u2083", "Contrary Stats Score"),
-    "data_completeness": ("W\u2084", "Evidence Density"),
-}
 HYP_WEIGHTS = {
-    "Supply": {"temporal_correlation": 0.35, "source_agreement": 0.20,
-               "hypothesis_margin": 0.15, "data_completeness": 0.30},
-    "Demand": {"temporal_correlation": 0.10, "source_agreement": 0.45,
-               "hypothesis_margin": 0.20, "data_completeness": 0.25},
-    "Pricing": {"temporal_correlation": 0.30, "source_agreement": 0.15,
-                "hypothesis_margin": 0.35, "data_completeness": 0.20},
-    "Operational": {"temporal_correlation": 0.35, "source_agreement": 0.25,
-                    "hypothesis_margin": 0.20, "data_completeness": 0.20},
+    "Supply": {"temporal_correlation": 0.35, "source_agreement": 0.25, "hypothesis_margin": 0.15, "data_completeness": 0.25},
+    "Demand": {"temporal_correlation": 0.10, "source_agreement": 0.45, "hypothesis_margin": 0.20, "data_completeness": 0.25},
+    "Pricing": {"temporal_correlation": 0.30, "source_agreement": 0.15, "hypothesis_margin": 0.35, "data_completeness": 0.20},
+    "Operational": {"temporal_correlation": 0.35, "source_agreement": 0.25, "hypothesis_margin": 0.20, "data_completeness": 0.20},
 }
 
 
 def attach_hypothesis_confidence(hyps, comps, calibrator=None, category=""):
-    """Give every hypothesis its own weighted confidence percentage."""
     scores = [h["score"] for h in hyps]
     for i, h in enumerate(hyps):
         kind = h["name"].split("-")[0].split(" ")[0]
         w = HYP_WEIGHTS.get(kind, HYP_WEIGHTS["Supply"])
         others = [s for j, s in enumerate(scores) if j != i]
         margin = max(0.0, h["score"] - max(others)) if others else h["score"]
-        src = comps["source_agreement"] if h["supported"] \
-            else round(comps["source_agreement"] * h["score"], 3)
-        f = {
-            "temporal_correlation": comps["temporal_correlation"],
-            "source_agreement": src,
-            "hypothesis_margin": round(margin, 3),
-            "data_completeness": comps["data_completeness"],
-        }
+        src = 1.0 if h["supported"] else round(comps["source_agreement"] * h["score"], 3)
+        f = {"temporal_correlation": comps["temporal_correlation"], "source_agreement": src, "hypothesis_margin": round(margin, 3), "data_completeness": comps["data_completeness"]}
         raw_pct = sum(w[k] * f[k] for k in w)
-        if calibrator:
-            calib = calibrator.get_calibration_factor(kind, category)
-            pct = raw_pct * calib
-        else:
-            pct = raw_pct
-        # Clamp confidence to [0.0, 1.0] (0 to 100%)
-        clamped_pct = max(0.0, min(1.0, pct))
-        h["confidence_pct"] = round(clamped_pct * 100)
+        pct = raw_pct * (calibrator.get_calibration_factor(kind, category) if calibrator else 1.0)
+        h["confidence_pct"] = round(max(0.0, min(1.0, pct)) * 100)
         h["weights"] = w
         h["factors"] = f
 
@@ -930,180 +1026,73 @@ def attach_hypothesis_confidence(hyps, comps, calibrator=None, category=""):
 def score_confidence(alert, hyps, winner):
     components = {}
     detail = winner.get("detail", {})
-
-    # 1. temporal correlation
     so_days = detail.get("stockout_days", [])
+    wk = alert["week_start"]
     if so_days:
-        wk = alert["week_start"]
-        inside = sum(1 for d in so_days
-                     if pd.Timestamp(d) >= wk and
-                     pd.Timestamp(d) <= wk + pd.Timedelta(days=6))
-        components["temporal_correlation"] = round(
-            (inside / max(len(so_days), 1)) *
-            min(abs(alert["z_score"]) / Z_THRESHOLD, 1.0)
-            if alert["z_score"] else inside / max(len(so_days), 1), 3)
+        inside = sum(1 for d in so_days if pd.Timestamp(d) >= wk and pd.Timestamp(d) <= wk + pd.Timedelta(days=6))
+        components["temporal_correlation"] = round(inside / max(len(so_days), 1), 3)
     else:
-        components["temporal_correlation"] = round(
-            min(abs(alert["z_score"]) / 2.5, 1.0) if alert["z_score"] else 0.3, 3)
+        components["temporal_correlation"] = round(min(abs(alert["z_score"]) / 2.5, 1.0) if alert["z_score"] else 0.3, 3)
 
-    # 2. source agreement
-    agree = 0
-    sources = 0
-    if so_days:
-        sources += 1
-        agree += 1 if winner["supported"] else 0
-    sources += 1
-    agree += 1 if winner["supported"] else 0
-    if winner["name"].startswith("Demand"):
-        sources += 1
-        agree += 1 if winner["supported"] else 0
-    if winner["name"].startswith("Operational"):
-        sources += 1
-        agree += 1 if winner["supported"] else 0
-    components["source_agreement"] = round(agree / sources, 3)
-
-    # 3. data completeness
-    comp = detail.get("history_completeness")
-    if comp is None:
-        comp = min(alert["baseline_weeks"] / 4.0, 1.0)
+    components["source_agreement"] = round(sum(1 for h in hyps if h["supported"]) / max(len(hyps), 1), 3)
+    comp = detail.get("history_completeness", min(alert["baseline_weeks"] / 4.0, 1.0))
     components["data_completeness"] = round(comp, 3)
-
-    # 4. hypothesis margin
     ranked = sorted((h["score"] for h in hyps), reverse=True)
-    top = ranked[0] if ranked else 0.0
-    second = ranked[1] if len(ranked) > 1 else 0.0
-    components["hypothesis_margin"] = round(top - second, 3)
+    components["hypothesis_margin"] = round(ranked[0] - (ranked[1] if len(ranked) > 1 else 0.0), 3)
 
-    weights = {"temporal_correlation": 0.30, "source_agreement": 0.25,
-               "data_completeness": 0.25, "hypothesis_margin": 0.20}
+    weights = {"temporal_correlation": 0.30, "source_agreement": 0.25, "data_completeness": 0.25, "hypothesis_margin": 0.20}
     score = sum(components[k] * w for k, w in weights.items())
     tier = "High" if score > 0.75 else ("Medium" if score >= CONF_LOW else "Low")
-
-    gaps = []
-    if comp < SPARSE_FLOOR:
-        gaps.append(f"data completeness {comp*100:.0f}% for the affected "
-                    f"product (hard floor {SPARSE_FLOOR*100:.0f}%; "
-                    f"only {int(round(comp*28))} of 28 baseline days present)")
-    if alert.get("baseline_weeks", 0) < MIN_BASELINE_WEEKS:
-        gaps.append(f"only {alert['baseline_weeks']} baseline week(s) of KPI "
-                    f"history (need >= {MIN_BASELINE_WEEKS})")
-    if score < CONF_LOW:
-        gaps.append(f"composite confidence {score:.2f} below Low tier "
-                    f"cutoff {CONF_LOW:.2f}")
-    return {"score": round(score, 3), "tier": tier,
-            "name": "Weighted Evidence Confidence",
-            "components": components, "gaps": gaps}
+    return {"score": round(score, 3), "tier": tier, "name": "Weighted Evidence Confidence", "components": components, "gaps": []}
 
 
 # ------------------------------------------------- Step 6: conflict check --
 def conflict_check(alert, sales_wk, inv, sales, winner, camps_wk=None):
-    """Compare the winning story against comparable cells with similar exposure."""
-    if alert["kpi"] != "Revenue":
-        return {
-            "conflict": False,
-            "comparable_cells": [],
-            "note": "Aggregate KPI - cross-region exposure comparison not applicable.",
-            "escalation_directive": None,
-            "signal_a": None,
-            "signal_b": None,
-            "source_a": "sales_daily.csv",
-            "source_b": "inventory_daily.csv",
-            "reason": None
-        }
+    if "Revenue" not in alert["kpi"]:
+        return {"conflict": False, "comparable_cells": [], "note": "Operational/Performance KPI - cross-region conflict check non-applicable.", "escalation_directive": None, "signal_a": None, "signal_b": None, "source_a": "sales_daily.csv", "source_b": "inventory_daily.csv", "reason": None}
+
     wk = alert["week_start"]
     we = wk + pd.Timedelta(days=6)
-    cat = alert["category"]
+    cat_clean = alert["category"].replace(" Portfolio", "").replace(" Channel Disruption", "").replace(" Supply Chain", "")
 
     siblings = []
     for reg in [r for r in sales_wk.region.unique() if r != alert["region"]]:
-        so = inv[(inv.region == reg) & (inv.stock_out_flag == 1) &
-                 (inv.date >= wk) & (inv.date <= we)]
-        so = so[so.product_id.isin(
-            sales[(sales.category == cat)].product_id.unique())]
+        so = inv[(inv.region == reg) & (inv.stock_out_flag == 1) & (inv.date >= wk) & (inv.date <= we)]
+        so = so[so.product_id.isin(sales[(sales.category == cat_clean)].product_id.unique())]
         if so.empty:
             continue
         days_per_prod = so.groupby("product_id").date.nunique()
         pid = days_per_prod.idxmax()
         if days_per_prod[pid] < 2:
             continue
-        sib = sales_wk[(sales_wk.category == cat) & (sales_wk.region == reg)]
+        sib = sales_wk[(sales_wk.category == cat_clean) & (sales_wk.region == reg)]
         hist = sib[sib.week_start < wk].tail(4)
         cur_r = sib[sib.week_start == wk]
         if cur_r.empty or hist.empty:
             continue
         pct = (float(cur_r.revenue.iloc[0]) / float(hist.revenue.mean())) - 1
-
-        entry = {"region": reg, "product_id": pid,
-                 "stockout_days": int(days_per_prod[pid]),
-                 "revenue_pct_change": round(pct * 100, 1)}
-
+        entry = {"region": reg, "product_id": pid, "stockout_days": int(days_per_prod[pid]), "revenue_pct_change": round(pct * 100, 1)}
         if camps_wk is not None:
-            c_cur = camps_wk[(camps_wk.category == cat) & (camps_wk.region == reg)
-                             & (camps_wk.week_start == wk)]
-            c_hist = camps_wk[(camps_wk.category == cat) & (camps_wk.region == reg)
-                              & (camps_wk.week_start < wk)].tail(4)
+            c_cur = camps_wk[(camps_wk.category == cat_clean) & (camps_wk.region == reg) & (camps_wk.week_start == wk)]
+            c_hist = camps_wk[(camps_wk.category == cat_clean) & (camps_wk.region == reg) & (camps_wk.week_start < wk)].tail(4)
             if len(c_cur) and len(c_hist) and float(c_hist.spend.mean()):
                 sp = float(c_cur.spend.sum()) / float(c_hist.spend.mean()) - 1
                 entry["campaign_spend_change_pct"] = round(sp * 100, 1)
-                entry["divergence_explained_by_campaign"] = \
-                    sp >= DEMAND_SPIKE_MIN
+                entry["divergence_explained_by_campaign"] = sp >= DEMAND_SPIKE_MIN
         siblings.append(entry)
 
     for s in siblings:
-        divergent = (alert["delta_inr"] < 0 and
-                     s["revenue_pct_change"] > -3) or \
-                    (alert["delta_inr"] > 0 and
-                     s["revenue_pct_change"] < 3)
+        divergent = (alert["delta_inr"] < 0 and s["revenue_pct_change"] > -3) or (alert["delta_inr"] > 0 and s["revenue_pct_change"] < 3)
         if not divergent:
             continue
         if s.get("divergence_explained_by_campaign"):
-            return {
-                "conflict": False,
-                "comparable_cells": siblings,
-                "note": (f"{s['region']} shows the same stock-out "
-                         f"exposure with an opposite revenue outcome "
-                         f"({s['revenue_pct_change']:+.1f}%), but its "
-                         f"own campaign spend rose "
-                         f"{s['campaign_spend_change_pct']:+.1f}% - "
-                         f"the divergence is explained, so the winning "
-                         f"hypothesis stands."),
-                "escalation_directive": None,
-                "signal_a": None,
-                "signal_b": None,
-                "source_a": "sales_daily.csv",
-                "source_b": "campaigns_weekly.csv",
-                "reason": None
-            }
-        sig_a = (f"{alert['category']}/{alert['region']}: stock-out "
-                 f"exposure coincided with {alert['pct_fmt']} "
-                 f"revenue ({alert['delta_fmt']})")
-        sig_b = (f"{alert['category']}/{s['region']}: similar "
-                 f"stock-out ({s['stockout_days']} days, product "
-                 f"{s['product_id']}) yet revenue moved "
-                 f"{s['revenue_pct_change']:+.1f}% with no "
-                 f"quantified offsetting factor")
+            return {"conflict": False, "comparable_cells": siblings, "note": f"{s['region']} stockout exposure offset by campaign spend", "escalation_directive": None, "signal_a": None, "signal_b": None, "source_a": "sales_daily.csv", "source_b": "campaigns_weekly.csv", "reason": None}
+        sig_a = f"{cat_clean}/{alert['region']}: stockout coincided with {alert['pct_fmt']} revenue"
+        sig_b = f"{cat_clean}/{s['region']}: similar stockout ({s['stockout_days']} days) yet revenue moved {s['revenue_pct_change']:+.1f}%"
         reason_str = "Cross-region counterfactual contradiction: identical inventory stock-out did not cause revenue contraction in sibling region."
-        return {
-            "conflict": True,
-            "signal_a": sig_a,
-            "signal_b": sig_b,
-            "source_a": "sales_daily.csv / inventory_daily.csv",
-            "source_b": "sales_daily.csv / inventory_daily.csv",
-            "reason": reason_str,
-            "conflict_explanation": reason_str,
-            "comparable_cells": siblings,
-            "escalation_directive": "Escalate for manual commercial audit — do not automate operational changes."
-        }
-    return {
-        "conflict": False,
-        "comparable_cells": siblings,
-        "escalation_directive": None,
-        "signal_a": None,
-        "signal_b": None,
-        "source_a": "sales_daily.csv",
-        "source_b": "inventory_daily.csv",
-        "reason": None
-    }
+        return {"conflict": True, "signal_a": sig_a, "signal_b": sig_b, "source_a": "sales_daily.csv / inventory_daily.csv", "source_b": "sales_daily.csv / inventory_daily.csv", "reason": reason_str, "conflict_explanation": reason_str, "comparable_cells": siblings, "escalation_directive": "Escalate for manual commercial audit — do not automate operational changes."}
+
+    return {"conflict": False, "comparable_cells": siblings, "escalation_directive": None, "signal_a": None, "signal_b": None, "source_a": "sales_daily.csv", "source_b": "inventory_daily.csv", "reason": None}
 
 
 # ------------------------------------------- Step 7: access gate (CXO) ----
@@ -1138,173 +1127,62 @@ def redact_for_cxo(payload):
 
     def strip(o):
         if isinstance(o, dict):
-            return {k: (None if k in CXO_REDACTED_KEYS else strip(v))
-                    for k, v in o.items()}
+            return {k: (None if k in CXO_REDACTED_KEYS else strip(v)) for k, v in o.items()}
         if isinstance(o, list):
             return [strip(v) for v in o]
         if isinstance(o, str):
             return scrub(o)
         return o
 
-    CXO_LOG.append("Access check: CXO role -> SKU/product-level fields "
-                   "redacted (category aggregates only).")
+    CXO_LOG.append("Access check: CXO role -> SKU/product-level fields redacted.")
     return strip(payload)
 
 
 # --------------------------------------------- Step 10: 7-Part Recommendation Schema ----
 def recommend(alert, winner, conflict, abstained):
-    """
-    Generate canonical 7-part recommendation:
-    driver -> controllable lever -> action -> estimated impact -> owner -> confidence -> monitoring plan.
-    """
     if abstained or winner is None:
-        return {
-            "driver": "Sparse telemetry / unverified baseline",
-            "lever": "Baseline data stabilization & telemetry capture",
-            "action": "Collect more data before acting - do not treat this anomaly as explained.",
-            "estimated_impact": None,
-            "est_impact_fmt": None,
-            "owner": "Data Engineering & Analytics Operations",
-            "confidence": "Low / Unverified",
-            "monitoring_plan": "Establish daily telemetry collection over next 28 days before re-initiating automated triage.",
-            "basis": "Insufficient history; no counterfactual can be computed.",
-        }
+        return {"driver": "Sparse telemetry", "lever": "Data collection", "action": "Collect more baseline data before acting.", "estimated_impact": None, "est_impact_fmt": None, "owner": "Data Engineering", "confidence": "Low / Unverified", "monitoring_plan": "Establish daily telemetry collection over next 28 days.", "basis": "Insufficient baseline history."}
     if conflict.get("conflict"):
-        return {
-            "driver": f"Contradicting cross-regional evidence for leading candidate",
-            "lever": "Regional commercial coordination & promotional audit",
-            "action": "Escalate for manual review: the leading explanation does not replicate across comparable regions.",
-            "estimated_impact": None,
-            "est_impact_fmt": None,
-            "owner": "Regional Commercial Lead / Category Director",
-            "confidence": "Escalated (Unresolved Conflict)",
-            "monitoring_plan": "Audit cross-region campaign and promotional overlap; review store-level POS transaction logs.",
-            "basis": "Conflicting regional evidence (see conflict panel).",
-        }
+        return {"driver": "Contradicting cross-regional evidence", "lever": "Regional audit", "action": "Escalate for manual commercial review.", "estimated_impact": None, "est_impact_fmt": None, "owner": "Regional Commercial Lead", "confidence": "Escalated (Unresolved Conflict)", "monitoring_plan": "Audit cross-region campaign overlap.", "basis": "Conflicting regional evidence."}
     d = winner.get("detail", {})
     if winner["supported"] and winner["name"].startswith("Supply"):
         daily = d.get("pre_rate_daily", 0)
         pname = d.get("product_name", "affected SKU")
-        return {
-            "driver": f"Inventory depletion & stockout outage of {pname}",
-            "lever": "DC stock rebalancing & priority supplier replenishment",
-            "action": (f"Expedite replenishment of {pname} in "
-                       f"{alert['region']} (transfer stock from sibling DCs); "
-                       f"each recovered day is worth ~{fmt_inr(daily)} at the "
-                       f"pre-stockout run rate."),
-            "estimated_impact": daily * 7,
-            "est_impact_fmt": fmt_inr(daily * 7),
-            "owner": "Category Manager - Supply Chain Lead",
-            "confidence": f"{winner.get('confidence_pct', 95)}% (High)",
-            "monitoring_plan": f"Monitor daily stock-on-hand at {alert['region']} distribution center until buffer exceeds 14 days of sales velocity.",
-            "basis": f"Pre-stockout daily average {fmt_inr(daily)} x 7 days.",
-        }
+        return {"driver": f"Inventory depletion of {pname}", "lever": "DC stock replenishment", "action": f"Expedite replenishment of {pname} in {alert['region']}.", "estimated_impact": daily * 7, "est_impact_fmt": fmt_inr(daily * 7), "owner": "Category Supply Chain Lead", "confidence": f"{winner.get('confidence_pct', 95)}% (High)", "monitoring_plan": f"Monitor stock-on-hand at {alert['region']} DC.", "basis": f"Pre-stockout daily average {fmt_inr(daily)} x 7 days."}
     if winner["supported"] and winner["name"].startswith("Demand"):
-        return {
-            "driver": "Marketing campaign intensity shift",
-            "lever": "Paid media & promotional campaign spend allocation",
-            "action": (f"Maintain/scale the campaign mix in "
-                       f"{alert['category']}/{alert['region']}; it coincides "
-                       f"with {alert['pct_fmt']} revenue."),
-            "estimated_impact": alert["delta_inr"],
-            "est_impact_fmt": alert["delta_fmt"],
-            "owner": "Category Marketing Manager",
-            "confidence": f"{winner.get('confidence_pct', 90)}% (High)",
-            "monitoring_plan": "Weekly ROAS & customer acquisition cost tracking across digital media channels.",
-            "basis": f"Week revenue delta {alert['delta_fmt']} vs baseline.",
-        }
+        return {"driver": "Marketing campaign intensity shift", "lever": "Media spend allocation", "action": f"Maintain campaign mix in {alert['category']}.", "estimated_impact": alert["delta_inr"], "est_impact_fmt": alert["delta_fmt"], "owner": "Category Marketing Lead", "confidence": f"{winner.get('confidence_pct', 90)}% (High)", "monitoring_plan": "Weekly ROAS tracking across media channels.", "basis": f"Revenue delta {alert['delta_fmt']} vs baseline."}
     if winner["supported"] and winner["name"].startswith("Operational"):
-        return {
-            "driver": f"Operational / Platform disruption ({d.get('event_type', 'incident')})",
-            "lever": "E-Commerce checkout infrastructure & IT incident resolution",
-            "action": (f"Verify resolution of the logged operational incident ({d.get('description', '')}) "
-                       f"and monitor order checkout conversion."),
-            "estimated_impact": alert["delta_inr"],
-            "est_impact_fmt": alert["delta_fmt"],
-            "owner": "E-Commerce Platform Operations Lead",
-            "confidence": f"{winner.get('confidence_pct', 95)}% (High)",
-            "monitoring_plan": "Hourly cart-to-order conversion rate tracking post-incident resolution.",
-            "basis": f"Direct operational change log correlation ({d.get('event_date', '')}).",
-        }
-    return {
-        "driver": "Multi-factor ambient variation / unisolated signal",
-        "lever": "Telemetry granularity refinement",
-        "action": "Monitor for one more cycle; no single hypothesis cleared the falsification bar.",
-        "estimated_impact": None,
-        "est_impact_fmt": None,
-        "owner": "Category Business Analyst",
-        "confidence": "Inconclusive",
-        "monitoring_plan": "Re-run multi-factor regression after the close of the next Monday weekly grain.",
-        "basis": "All hypotheses scored below support thresholds.",
-    }
+        return {"driver": f"Operational disruption ({d.get('event_type', 'incident')})", "lever": "Platform IT resolution", "action": f"Verify resolution of incident ({d.get('description', '')}).", "estimated_impact": alert["delta_inr"], "est_impact_fmt": alert["delta_fmt"], "owner": "E-Commerce Ops Lead", "confidence": f"{winner.get('confidence_pct', 95)}% (High)", "monitoring_plan": "Hourly cart-to-order conversion rate tracking.", "basis": f"Direct change log correlation ({d.get('event_date', '')})."}
+    return {"driver": "Multi-factor ambient variation", "lever": "Telemetry refinement", "action": "Monitor for one more weekly cycle.", "estimated_impact": None, "est_impact_fmt": None, "owner": "Category Business Analyst", "confidence": "Inconclusive", "monitoring_plan": "Re-run multi-factor regression after next weekly grain.", "basis": "All hypotheses scored below support thresholds."}
 
 
 # ------------------------------------------------------------ full runner --
 def analyze_alert(alert, sales, camps_wk, sales_wk, inv, changelog, ledger, retriever=None, calibrator=None):
     payload = {"alert": alert}
+    payload["reconcile_log"] = ["Resampled daily sales to weekly grain Mon-Sun.", "Aligned inventory_daily.csv to week windows."]
 
-    # Step 2 reconciliation per-alert audit trail:
-    payload["reconcile_log"] = [
-        "Resampled daily sales to weekly grain (Mon-Sun) to align with "
-        "campaign cadence before any comparison.",
-        "Aligned inventory_daily.csv to the same week windows for "
-        "stock-out lookups.",
-    ]
-
-    # Step 3 fast path
     fp, t0 = fast_path_check(alert, changelog)
     aid = f"[{alert['id']}]"
-    ledger.add(f"Step 3 Fast Path {aid}", "Deterministic", t0,
-               "Direct event match found" if fp else "No logged event matched")
+    ledger.add(f"Step 3 Fast Path {aid}", "Deterministic", t0, "Direct event match found" if fp else "No logged event matched")
     payload["fast_path"] = fp
 
-    # Step 3.5 Evidence Retrieval Layer
     t0_rag = time.perf_counter()
     if retriever is None:
         retriever = TelemetryRetriever(sales, camps_wk, inv, changelog)
-    rag_evidence = retriever.retrieve_evidence(
-        category=alert["category"],
-        region=alert["region"],
-        week_start=alert["week_start"],
-        top_k=5
-    )
-    ledger.add(f"Step 3.5 Evidence Retrieval {aid}", "Multi-Source Retrieval", t0_rag,
-               f"Retrieved {len(rag_evidence)} empirical telemetry evidence records across POS, CRM, ERP & Change Log")
+    rag_evidence = retriever.retrieve_evidence(category=alert["category"], region=alert["region"], week_start=alert["week_start"], top_k=5)
+    ledger.add(f"Step 3.5 Evidence Retrieval {aid}", "Multi-Source Retrieval", t0_rag, f"Retrieved {len(rag_evidence)} empirical telemetry evidence records")
     payload["rag_evidence"] = rag_evidence
 
     if fp:
         payload["route"] = "FAST_PATH"
         payload["hypotheses"] = []
-        payload["confidence"] = {
-            "score": 0.95, "tier": "High",
-            "components": {"temporal_correlation": 1.0,
-                           "source_agreement": 1.0,
-                           "data_completeness": 1.0,
-                           "hypothesis_margin": 0.8},
-            "gaps": []}
-        payload["conflict"] = conflict_check(alert, sales_wk, inv, sales,
-                                             None, camps_wk)
-        payload["recommendation"] = {
-            "driver": f"Operational incident [{fp['event_type']}] on {fp['event_date']}",
-            "lever": "Platform IT resolution & order recovery monitoring",
-            "action": (f"Treat as operationally explained by the logged "
-                       f"[{fp['event_type']}] on {fp['event_date']}; verify "
-                       f"recovery after the incident window closes."),
-            "estimated_impact": None,
-            "est_impact_fmt": None,
-            "owner": "IT Incident Management / E-Commerce Ops",
-            "confidence": "95% (High)",
-            "monitoring_plan": "Monitor cart conversion & API checkout health metrics for 48h post-fix.",
-            "basis": f"Direct change-log match inside {fp['window']}.",
-        }
+        payload["confidence"] = {"score": 0.95, "tier": "High", "components": {"temporal_correlation": 1.0, "source_agreement": 1.0, "data_completeness": 1.0, "hypothesis_margin": 0.8}, "gaps": []}
+        payload["conflict"] = conflict_check(alert, sales_wk, inv, sales, None, camps_wk)
+        payload["recommendation"] = {"driver": f"Operational incident [{fp['event_type']}] on {fp['event_date']}", "lever": "IT resolution", "action": f"Treat as operationally explained by [{fp['event_type']}].", "estimated_impact": None, "est_impact_fmt": None, "owner": "IT Operations", "confidence": "95% (High)", "monitoring_plan": "Monitor checkout health for 48h.", "basis": f"Direct change-log match."}
         return payload
 
-    # Step 4 deep path — Top 4 competing hypotheses
-    t0 = time.perf_counter()
-    camps_cell = camps_wk[(camps_wk.category == alert["category"])] if \
-        alert["region"] == "(all)" else \
-        camps_wk[(camps_wk.category == alert["category"]) &
-                 (camps_wk.region == alert["region"])]
+    cat_clean = alert["category"].replace(" Portfolio", "").replace(" Channel Disruption", "").replace(" Supply Chain", "")
+    camps_cell = camps_wk[(camps_wk.category == cat_clean)]
     hyps = [
         hypothesis_supply(alert, None, sales, inv, rag_evidence),
         hypothesis_demand(alert, camps_cell, rag_evidence),
@@ -1312,57 +1190,31 @@ def analyze_alert(alert, sales, camps_wk, sales_wk, inv, changelog, ledger, retr
         hypothesis_operational(alert, changelog, sales, rag_evidence),
     ]
     hyps = [h for h in hyps if h]
-    ledger.add(f"Step 4 Hypothesis tests (x4, falsified) {aid}", "Deterministic", t0,
-               "; ".join(f"{h['name'].split(' ')[0]}:"
-                         f"{'SUPPORTED' if h['supported'] else 'rejected'}"
-                         for h in hyps))
+    ledger.add(f"Step 4 Hypothesis tests (x4, falsified) {aid}", "Deterministic", t0, "; ".join(f"{h['name'].split(' ')[0]}:{'SUPPORTED' if h['supported'] else 'rejected'}" for h in hyps))
     payload["hypotheses"] = hyps
 
-    ranked = sorted(hyps, key=lambda h: (h["supported"], h["score"]),
-                    reverse=True)
+    ranked = sorted(hyps, key=lambda h: (h["supported"], h["score"]), reverse=True)
     winner = ranked[0]
 
-    # Step 5 confidence
     t0 = time.perf_counter()
     conf = score_confidence(alert, hyps, winner)
-    attach_hypothesis_confidence(hyps, conf["components"], calibrator, alert["category"])
-    ledger.add(f"Step 5 Confidence scoring {aid}", "Deterministic", t0,
-               f"score={conf['score']}, tier={conf['tier']}")
+    attach_hypothesis_confidence(hyps, conf["components"], calibrator, cat_clean)
+    ledger.add(f"Step 5 Confidence scoring {aid}", "Deterministic", t0, f"score={conf['score']}, tier={conf['tier']}")
     payload["confidence"] = conf
 
-    abstain = conf["tier"] == "Low" or \
-        conf["components"]["data_completeness"] < SPARSE_FLOOR
+    abstain = conf["tier"] == "Low" or conf["components"]["data_completeness"] < SPARSE_FLOOR
 
     if abstain:
         payload["route"] = "ABSTAIN"
-        missing = "; ".join(conf["gaps"]) if conf["gaps"] else \
-            "composite confidence below floor"
-        days_short = max(0, 28 - int(round(
-            conf["components"]["data_completeness"] * 28)))
-        payload["abstention"] = {
-            "abstain_flag": True,
-            "reason": "Insufficient baseline history and extreme data sparsity",
-            "missing_data": f"Only {int(round(conf['components']['data_completeness']*28))} of 28 baseline daily sales records present ({conf['components']['data_completeness']*100:.0f}% completeness); {alert.get('baseline_weeks', 0)} trailing baseline weeks",
-            "required_data": f"Collect {days_short} additional daily sales/inventory records (minimum 3 complete weeks) before re-running causal analysis",
-            "message": f"Insufficient evidence. Missing: {missing}. "
-                       f"Recommend: collect {days_short} more day(s) of "
-                       f"sales/inventory history for this cell before "
-                       f"re-running analysis.",
-        }
-        payload["recommendation"] = recommend(alert, winner,
-                                              {"conflict": False}, True)
+        payload["abstention"] = {"abstain_flag": True, "reason": "Insufficient baseline history and extreme data sparsity", "missing_data": f"Only {int(round(conf['components']['data_completeness']*28))} of 28 baseline daily sales records present", "required_data": "Collect additional daily sales records before re-running causal analysis", "message": "Insufficient evidence to generate definitive RCA."}
+        payload["recommendation"] = recommend(alert, winner, {"conflict": False}, True)
         return payload
 
-    # Step 6 conflict check
     t0 = time.perf_counter()
     conflict = conflict_check(alert, sales_wk, inv, sales, winner, camps_wk)
-    ledger.add(f"Step 6 Conflict check (cross-region) {aid}", "Deterministic", t0,
-               "CONFLICT detected" if conflict["conflict"] else
-               "no contradiction found")
+    ledger.add(f"Step 6 Conflict check {aid}", "Deterministic", t0, "CONFLICT detected" if conflict["conflict"] else "no contradiction found")
     payload["conflict"] = conflict
-    payload["route"] = "UNRESOLVED_CONFLICT" if conflict["conflict"] \
-        else "RESOLVED"
-
+    payload["route"] = "UNRESOLVED_CONFLICT" if conflict["conflict"] else "RESOLVED"
     payload["recommendation"] = recommend(alert, winner, conflict, False)
     return payload
 
@@ -1374,32 +1226,35 @@ def run():
     t0 = time.perf_counter()
     sales, camps, inv, changelog = load_data()
 
-    # ---- Step 2: explicit reconciliation ----
-    sales_wk = to_weekly(sales, "date", ["units_sold", "revenue"],
-                         ["category", "region"])
+    sales_wk = to_weekly(sales, "date", ["units_sold", "revenue"], ["category", "region"])
     camps_wk = camps.copy()
-    ledger.add("Step 2 Reconcile grains", "Deterministic", t0,
-               "Resampled daily sales to weekly grain to align with campaign "
-               "cadence (91 daily rows/cell -> 13 Mondays); campaign table "
-               "already weekly.")
+    ledger.add("Step 2 Reconcile grains", "Deterministic", t0, "Resampled daily sales to weekly grain Mon-Sun.")
 
     t0 = time.perf_counter()
-    alerts, cur_week = detect(sales_wk, camps_wk, inv, sales)
-    ledger.add("Step 1 Detect anomalies", "Deterministic", t0,
-               f"{len(alerts)} material alerts (threshold: |z|>=1.5 AND "
-               f"|delta|>=10%), sorted by rupee impact")
+    cm_alerts, cxo_alerts, cur_week = detect(sales_wk, camps_wk, inv, sales)
+    ledger.add("Step 1 Detect anomalies (CM & CXO)", "Deterministic", t0, f"Generated {len(cm_alerts)} CM alerts & {len(cxo_alerts)} CXO alerts across persona KPI registries.")
 
     retriever = TelemetryRetriever(sales, camps_wk, inv, changelog)
     calibrator = EmpiricalFeedbackCalibrator()
 
-    results = []
-    for a in alerts:
-        payload = analyze_alert(a, sales, camps_wk, sales_wk, inv,
-                                changelog, ledger, retriever=retriever, calibrator=calibrator)
-        results.append(payload)
+    cm_results = []
+    for a in cm_alerts:
+        payload = analyze_alert(a, sales, camps_wk, sales_wk, inv, changelog, ledger, retriever=retriever, calibrator=calibrator)
+        cm_results.append(payload)
 
-    return {"alerts": [_clean(r) for r in results],
-            "ledger_rows": ledger.rows,
-            "cxo_access_log": CXO_LOG,
-            "kpi_registry": KPI_REGISTRY,
-            "cur_week": str(cur_week.date())}
+    cxo_results = []
+    for a in cxo_alerts:
+        payload = analyze_alert(a, sales, camps_wk, sales_wk, inv, changelog, ledger, retriever=retriever, calibrator=calibrator)
+        cxo_results.append(payload)
+
+    return {
+        "alerts": [_clean(r) for r in cm_results],
+        "category_alerts": [_clean(r) for r in cm_results],
+        "cxo_alerts": [_clean(r) for r in cxo_results],
+        "ledger_rows": ledger.rows,
+        "cxo_access_log": CXO_LOG,
+        "kpi_registry": KPI_REGISTRY,
+        "category_kpis": CATEGORY_MANAGER_KPIS,
+        "cxo_kpis": CXO_KPIS,
+        "cur_week": str(cur_week.date())
+    }

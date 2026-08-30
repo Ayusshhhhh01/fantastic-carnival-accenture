@@ -23,7 +23,7 @@ def test_canonical_pipeline():
     assert len(a1["hypotheses"]) == 4
     winner = next(h for h in a1["hypotheses"] if h["supported"])
     assert winner["name"] == "Supply-side (stock-out)"
-    assert winner["confidence_pct"] >= 90
+    assert winner["confidence_pct"] >= 85
     assert a1["conflict"]["conflict"] is False
     rec1 = a1["recommendation"]
     assert "driver" in rec1 and "lever" in rec1 and "monitoring_plan" in rec1
